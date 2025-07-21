@@ -12,7 +12,9 @@ from tools.blanes import (
     create_reservation,
     blanes_list,
     get_blane_info,
-    prepare_reservation_prompt
+    prepare_reservation_prompt,
+    search_blanes_by_location,
+    authenticate_email,
 )
 # from tools.booking_tools import (
 #     is_authenticated,
@@ -23,6 +25,65 @@ from tools.blanes import (
 from tools.misc_tools import sum_tool
 
 load_dotenv()
+district_map = {
+    "anfa": [
+        "bourgogne",
+        "sidi belyout (centre ville, médina)",
+        "maârif",
+        "ain diab (corniche)",
+        "gauthier",
+        "racine",
+        "palmier",
+        "triangle d’or",
+        "oasis",
+        "cil"
+    ],
+    "hay hassani": [
+        "hay hassani",
+        "oulfa",
+        "errahma",
+        "lissasfa"
+    ],
+    "aïn chock": [
+        "aïn chock",
+        "sidi maârouf",
+        "californie",
+        "polo"
+    ],
+    "aïn sebaâ – hay mohammadi": [
+        "aïn sebaâ",
+        "hay mohammadi",
+        "roches noires (belvédère)"
+    ],
+    "al fida – mers sultan": [
+        "al fida",
+        "mers sultan",
+        "derb sultan",
+        "habous"
+    ],
+    "sidi bernoussi – sidi moumen": [
+        "sidi bernoussi",
+        "sidi moumen",
+        "zenata"
+    ],
+    "moulay rachid – ben m’sick": [
+        "moulay rachid",
+        "sidi othmane",
+        "ben m’sick",
+        "sbata"
+    ],
+    "maarif":[
+        "timtoun",
+        "lepit"
+    ],
+    "surroundings": [
+        "bouskoura",
+        "la ville verte",
+        "dar bouazza",
+        "mohammedia",
+        "bouznika"
+    ]
+}
 
 system_prompt = """
 Hey there! I’m *Dabablane AI* — your smart, chatty assistant who’s got your back. 😎  
@@ -55,7 +116,7 @@ Date: `{date}`
 - ✉️ *Authenticate you* using your email — no email, no data.  
 - 📅 *Look up your reservation info* once you're verified.  
 - 🛎️ *Make new reservations* for you like a pro.  
-- 😄 *Answer random fun questions* using my `witty_conversational_tool` — ask me anything, even what to wear on a date 😉  
+- 📍 *Search blanes in your area* — just tell me your district and sub-district (if you don’t, I’ll ask).  
 - 🔒 *Log you out*, refresh your token, or help with secure stuff.
 
 ---
@@ -64,13 +125,24 @@ Date: `{date}`
 
 - If your email is `"unauthenticated"`: I’ll first ask for it and run the `authenticate_email` tool.  
 - If you’re already authenticated with a real email: I’ll use that to answer your requests or manage bookings.    
-- When the user wants to make a reservation:
-    1. First, call `blanes_info` to list the available blanes.
-    2. Ask the user which blane they want to reserve.
-    3. Once the user selects the blane, call `prepare_reservation_prompt` to gather and structure the required data for the reservation.
-    4. Collect any other necessary details from the user if needed.
-    5. Only then call `create_reservation` using the prepared data.
-NOTE : ALWAYS CALL `prepare_reservation_prompt` BEFORE `create_reservation` TO PREPARE THE RESERVATION PROMPT.
+
+📍 *If user says anything like*:
+- "Show me blanes near me"
+- "Blanes in my area"
+- "I want to see nearby blanes"
+- "Anything available in [my] district?"
+- "Find blanes in [location]"
+
+➡️ Then:
+1. Ask: “🧭 Can you tell me your *district* and *sub-district*, please?”
+2. Once both are provided, call `search_blanes_by_location(district, sub_district)` with spelling correction using the `district_map`.
+
+---
+
+📍 *Casablanca and Surrounding District Map*  
+Use the following official district and sub-district names to understand user input and correct typos in `search_blanes_by_location`:
+{district_map}
+
 ---
 
 💬 *WhatsApp Chat Guidelines*  
@@ -103,6 +175,7 @@ Please don't use any other formatting i.e. **text**, etc
 
 
 
+
 def get_chat_history(session_id: str):
     with SessionLocal() as db:
         history = db.query(Message).filter(Message.session_id == session_id).order_by(Message.timestamp).all()
@@ -118,7 +191,9 @@ class BookingToolAgent:
             create_reservation,
             blanes_list,
             get_blane_info,
-            prepare_reservation_prompt
+            prepare_reservation_prompt,
+            search_blanes_by_location,
+            authenticate_email
         ]
 
         self.llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
@@ -160,7 +235,8 @@ class BookingToolAgent:
             "date": date.today().isoformat(),
             "session_id": session_id,
             "chat_history": formatted_history,
-            "client_email": client_email
+            "client_email": client_email,
+            "district_map": district_map
         })
 
         return response["output"]

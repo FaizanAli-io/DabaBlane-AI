@@ -2,6 +2,8 @@ from langchain.tools import tool
 import httpx
 import requests
 from datetime import datetime
+from app.chatbot.models import Session
+from app.database import SessionLocal
 BASEURLFRONT = "https://dbapi.escalarmedia.com/api/front/v1"
 BASEURLBACK = "https://dbapi.escalarmedia.com/api/back/v1"
 
@@ -24,6 +26,64 @@ def get_token():
     else:
         return "Try again later."
 
+def format_date(date_str):
+            if not date_str:
+                return "N/A"
+            for fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%d %H:%M:%S"):
+                try:
+                    return datetime.strptime(date_str, fmt).strftime("%d %B %Y")
+                except ValueError:
+                    continue
+            return date_str
+
+def format_time(time_str):
+    if not time_str:
+        return "N/A"
+    for fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%H:%M:%S"):
+        try:
+            return datetime.strptime(time_str, fmt).strftime("%I:%M %p")
+        except ValueError:
+            continue
+    return time_str
+def parse_datetime(date_str):
+        for fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%d %H:%M:%S", "%H:%M:%S"):
+            try:
+                return datetime.strptime(date_str, fmt)
+            except ValueError:
+                continue
+        return None
+
+def parse_time_only(time_str):
+    for fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%H:%M:%S"):
+        try:
+            return datetime.strptime(time_str, fmt).time()
+        except ValueError:
+            continue
+    return None
+
+@tool("authenticate_email")
+def authenticate_email(session_id: str, client_email: str) -> str:
+    """
+    Authenticates a user by email and associates it with a session.
+    """
+    with SessionLocal() as db:
+        # Check if client exists
+        # client = db.query(Client).filter(Client.email == client_email).first()
+        # if not client:
+        #     client = Client(email=client_email)
+        #     db.add(client)
+        #     db.commit()
+
+        # Fetch the session
+        session = db.query(Session).filter(Session.id == session_id).first()
+        if not session:
+            return f"Session {session_id} not found."
+
+        # Set client_email and commit
+        session.client_email = client_email
+        db.commit()
+
+    return f"Authenticated {client_email} for session {session_id}"
 
 @tool("list_blanes")
 def blanes_list() -> str:
@@ -47,7 +107,7 @@ def blanes_list() -> str:
         "status": "active",
         "sort_by": "created_at",
         "sort_order": "desc",
-        "pagination_size": 10  # or any size you want
+        "pagination_size": 20 # or any size you want
     }
 
     try:
@@ -81,7 +141,7 @@ def get_blane_info(blane_id: int):
     if not token:
         return "❌ Failed to retrieve token. Please try again later."
     
-    url = f"{BASEURLBACK}/blanes"
+    url = f"{BASEURLBACK}/blanes/{blane_id}"
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json"
@@ -96,33 +156,12 @@ def get_blane_info(blane_id: int):
     try:
         response = httpx.get(url, headers=headers, params=params)
         response.raise_for_status()
-        blanes = response.json().get("data", [])
+        blane = response.json().get("data", [])
+        print(blane)
+        # blane = next((b for b in blanes if b["id"] == blane_id), None)
+        # if not blane:
+        #     return f"❌ Blane with ID {blane_id} not found."
 
-        blane = next((b for b in blanes if b["id"] == blane_id), None)
-        if not blane:
-            return f"❌ Blane with ID {blane_id} not found."
-
-        from datetime import datetime
-
-        def format_date(date_str):
-            if not date_str:
-                return "N/A"
-            for fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%d %H:%M:%S"):
-                try:
-                    return datetime.strptime(date_str, fmt).strftime("%d %B %Y")
-                except ValueError:
-                    continue
-            return date_str
-
-        def format_time(time_str):
-            if not time_str:
-                return "N/A"
-            for fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%H:%M:%S"):
-                try:
-                    return datetime.strptime(time_str, fmt).strftime("%I:%M %p")
-                except ValueError:
-                    continue
-            return time_str
 
         msg = f"📋 *Blane Details*\n\n"
         msg += f"🏷 *Name:* {blane.get('name')}\n"
@@ -156,9 +195,10 @@ def get_blane_info(blane_id: int):
         if main_type == "reservation":
             msg += f"\n📅 *Available From:* {format_date(blane.get('start_date'))}"
             msg += f"\n📅 *Expires On:* {format_date(blane.get('expiration_date'))}"
-            jours = ", ".join(blane.get("jours_creneaux", []))
-            if jours:
-                msg += f"\n📆 *Days Open:* {jours}"
+            jours = blane.get("jours_creneaux")
+            if isinstance(jours, list) and jours:
+                msg += f"\n📆 *Days Open:* {', '.join(jours)}"
+
             msg += f"\n👥 *Max Per Slot:* {blane.get('max_reservation_par_creneau')}"
             msg += f"\n👤 *Persons per Deal:* {blane.get('nombre_personnes')}"
             msg += f"\n🔢 *Total Reservation Limit:* {blane.get('nombre_max_reservation')}"
@@ -195,8 +235,6 @@ def get_blane_info(blane_id: int):
 
     except httpx.HTTPStatusError as e:
         return f"❌ HTTP Error {e.response.status_code}: {e.response.text}"
-    except Exception as e:
-        return f"❌ Error fetching blanes: {str(e)}"
 
 
 
@@ -382,26 +420,7 @@ def prepare_reservation_prompt(blane_id: int) -> str:
     except Exception as e:
         return f"❌ Error fetching blane: {e}"
 
-    # Utilities
-    def format_date(date_str):
-        if not date_str:
-            return "N/A"
-        for fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%d %H:%M:%S"):
-            try:
-                return datetime.strptime(date_str, fmt).strftime("%d %B %Y")
-            except ValueError:
-                continue
-        return date_str
-
-    def format_time(time_str):
-        if not time_str:
-            return "N/A"
-        for fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%H:%M:%S"):
-            try:
-                return datetime.strptime(time_str, fmt).strftime("%I:%M %p")
-            except ValueError:
-                continue
-        return time_str
+   
 
     # Determine blane details
     name = blane.get("name", "Unknown")
@@ -460,7 +479,7 @@ def prepare_reservation_prompt(blane_id: int) -> str:
     elif is_reservation and type_time == "date":
         msg += f"4. *Start Date*: (Between {date_range})\n"
         msg += f"5. *End Date*: (Between {date_range})\n"
-        msg += f"6. *Quantity*: (How many days?)\n"
+        msg += f"6. *Quantity*: \n"
         msg += f"7. *Number of Persons*: (People attending)\n"
         msg += f"8. *Comments*: (Any requests?)\n"
 
@@ -478,21 +497,7 @@ def create_reservation(session_id: str, blane_id: int, name: str = "N/A", email:
     from datetime import datetime, timedelta
     import httpx
 
-    def parse_datetime(date_str):
-        for fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%d %H:%M:%S", "%H:%M:%S"):
-            try:
-                return datetime.strptime(date_str, fmt)
-            except ValueError:
-                continue
-        return None
-
-    def parse_time_only(time_str):
-        for fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%H:%M:%S"):
-            try:
-                return datetime.strptime(time_str, fmt).time()
-            except ValueError:
-                continue
-        return None
+    
 
     token = get_token()
     if not token:
@@ -550,7 +555,7 @@ def create_reservation(session_id: str, blane_id: int, name: str = "N/A", email:
         user_day = datetime.strptime(date, "%Y-%m-%d").strftime("%A")
         user_day_fr = english_to_french_days.get(user_day, "")
 
-        if user_day_fr.capitalize() not in jours_open:
+        if jours_open and user_day_fr.capitalize() not in jours_open:
             return f"🚫 Blane is closed on {user_day}. Open days: {', '.join(jours_open)}"
 
         if blane_time_type == "time":
@@ -809,7 +814,78 @@ def list_reservations(email: str) -> str:
 
     # return message.strip()
     return data
- 
+@tool("Search_blanes_by_location")
+def search_blanes_by_location(district: str, sub_district: str = "") -> str:
+    """
+    Retrieves blanes based on sub-district first. If fewer than 3 are found,
+    falls back to district-level matching and informs the user accordingly.
+    """
+    token = get_token()
+    if not token:
+        return "❌ Failed to retrieve token. Please try again later."
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+
+    params = {
+        "status": "active",
+        "sort_by": "created_at",
+        "sort_order": "desc",
+        "pagination_size": 100
+    }
+
+    try:
+        response = httpx.get(f"{BASEURLBACK}/blanes", headers=headers, params=params)
+        response.raise_for_status()
+        blanes = response.json().get("data", [])
+    except Exception as e:
+        return f"❌ Error fetching blanes: {e}"
+
+    district_lower = district.lower()
+    sub_district_lower = sub_district.lower()
+
+    # Step 1: Filter for sub-district matches
+    sub_matches = []
+    for blane in blanes:
+        desc = (blane.get("description") or "").lower()
+        if district_lower in desc and sub_district_lower in desc:
+            sub_matches.append(blane["id"])
+
+    # Step 2: If less than 3, add more from district-level
+    district_matches = sub_matches.copy()
+    if len(sub_matches) < 3:
+        for blane in blanes:
+            desc = (blane.get("description") or "").lower()
+            if district_lower in desc and blane["id"] not in district_matches:
+                district_matches.append(blane["id"])
+
+    # Step 3: Prepare results
+    if not district_matches:
+        return f"❌ No blanes found in district *{district}* or sub-district *{sub_district}*."
+
+    # Step 4: Generate summary message
+    sub_count = len(sub_matches)
+    district_only_count = len(district_matches) - sub_count
+    total = len(district_matches)
+
+    if sub_count == 0:
+        intro_msg = f"ℹ️ I couldn't find any blanes in *{sub_district}*, but I did find {district_only_count} in *{district}*."
+    elif sub_count < 3:
+        intro_msg = f"✅ I found {sub_count} blane(s) in *{sub_district}*, and {district_only_count} more in *{district}*."
+    else:
+        intro_msg = f"✅ I found {sub_count} blane(s) in *{sub_district}*."
+
+    # Step 5: Fetch and list blane info
+    result_msgs = []
+    for blane_id in district_matches:
+        info = get_blane_info.invoke({"blane_id": blane_id})
+        result_msgs.append(info)
+
+    return intro_msg + "\n\n" + "\n\n".join(result_msgs)
+
+
 # @tool("list_reservations")
 # def list_reservations(email: str) -> str:
 #     """
