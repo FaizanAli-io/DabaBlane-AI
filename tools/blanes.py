@@ -45,6 +45,7 @@ def format_time(time_str):
         except ValueError:
             continue
     return time_str
+
 def parse_datetime(date_str):
         for fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%d %H:%M:%S", "%H:%M:%S"):
             try:
@@ -332,11 +333,15 @@ def prepare_reservation_prompt(blane_id: int) -> str:
 @tool("create_reservation")
 def create_reservation(session_id: str, blane_id: int, name: str = "N/A", email: str = "N/A", phone: str = "N/A", city: str = "N/A", date: str = "N/A", end_date: str = "N/A", time: str = "N/A", quantity: int = 1, number_persons: int = 0, comments: str = "N/A") -> str:
     """
-    Handles reservation creation for:
-    - Reservation Blanes (daily and hourly)
-    - Order Blanes (digital and physical)
-    Automatically determines which fields are required based on blane type.
+    Handles reservation creation.
+    IMPORTANT: Do not call this tool directly. Always call `before_create_reservation` first to determine required fields, collect them from the user, and then call this tool.
     """
+    # """
+    # Handles reservation creation for:
+    # - Reservation Blanes (daily and hourly)
+    # - Order Blanes (digital and physical)
+    # Automatically determines which fields are required based on blane type.
+    # """
     from datetime import datetime, timedelta
     import httpx
 
