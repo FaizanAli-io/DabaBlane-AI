@@ -257,9 +257,9 @@ def prepare_reservation_prompt(blane_id: int) -> str:
     }
 
     try:
-        res = httpx.get(f"{BASEURLBACK}/blanes", headers=headers)
+        res = httpx.get(f"{BASEURLBACK}/blanes/{blane_id}", headers=headers)
         res.raise_for_status()
-        blane = next((b for b in res.json()["data"] if b["id"] == blane_id), None)
+        # blane = next((b for b in res.json()["data"] if b["id"] == blane_id), None)
         if not blane:
             return f"❌ Blane with ID {blane_id} not found."
     except Exception as e:
@@ -358,9 +358,9 @@ def create_reservation(session_id: str, blane_id: int, name: str = "N/A", email:
 
     # Step 1: Get blane info
     try:
-        res = httpx.get(f"{BASEURLBACK}/blanes", headers=headers)
+        res = httpx.get(f"{BASEURLBACK}/blanes/{blane_id}", headers=headers)
         res.raise_for_status()
-        blane = next((b for b in res.json()["data"] if b["id"] == blane_id), None)
+        # blane = next((b for b in res.json()["data"] if b["id"] == blane_id), None)
         if not blane:
             return f"❌ Blane with ID {blane_id} not found."
     except Exception as e:
