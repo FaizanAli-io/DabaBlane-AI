@@ -260,6 +260,7 @@ def prepare_reservation_prompt(blane_id: int) -> str:
         res = httpx.get(f"{BASEURLBACK}/blanes/{blane_id}", headers=headers)
         res.raise_for_status()
         # blane = next((b for b in res.json()["data"] if b["id"] == blane_id), None)
+        blane = res.json()["data"]
         if not blane:
             return f"❌ Blane with ID {blane_id} not found."
     except Exception as e:
@@ -313,7 +314,8 @@ def prepare_reservation_prompt(blane_id: int) -> str:
 
     if is_order:
         msg += f"5. *Quantity*: (How many units?)\n"
-        msg += f"6. *Comments*: (Any special instructions?)\n"
+        msg += f"6. *Delivery Address*: (Place where order has to be delivered)\n"
+        msg += f"7. *Comments*: (Any special instructions?)\n"
     elif is_reservation and type_time == "time":
         msg += f"4. *Date*: (Available: {date_range})\n"
         msg += f"5. *Time*: (Available slots: {slots})\n"
@@ -331,21 +333,26 @@ def prepare_reservation_prompt(blane_id: int) -> str:
 
 
 @tool("create_reservation")
-def create_reservation(session_id: str, blane_id: int, name: str = "N/A", email: str = "N/A", phone: str = "N/A", city: str = "N/A", date: str = "N/A", end_date: str = "N/A", time: str = "N/A", quantity: int = 1, number_persons: int = 0, comments: str = "N/A") -> str:
+def create_reservation(
+    session_id: str,
+    blane_id: int,
+    name: str = "N/A",
+    email: str = "N/A",
+    phone: str = "N/A",
+    city: str = "N/A",
+    date: str = "N/A",
+    end_date: str = "N/A",
+    time: str = "N/A",
+    quantity: int = 1,
+    number_persons: int = 1,
+    delivery_address: str = "N/A",
+    comments: str = "N/A"
+) -> str:
     """
-    Handles reservation creation.
-    IMPORTANT: Do not call this tool directly. Always call `before_create_reservation` first to determine required fields, collect them from the user, and then call this tool.
+    Handles reservation or order creation. Must run `before_create_reservation` first.
     """
-    # """
-    # Handles reservation creation for:
-    # - Reservation Blanes (daily and hourly)
-    # - Order Blanes (digital and physical)
-    # Automatically determines which fields are required based on blane type.
-    # """
     from datetime import datetime, timedelta
     import httpx
-
-    
 
     token = get_token()
     if not token:
@@ -356,118 +363,274 @@ def create_reservation(session_id: str, blane_id: int, name: str = "N/A", email:
         "Content-Type": "application/json"
     }
 
-    # Step 1: Get blane info
     try:
         res = httpx.get(f"{BASEURLBACK}/blanes/{blane_id}", headers=headers)
         res.raise_for_status()
-        # blane = next((b for b in res.json()["data"] if b["id"] == blane_id), None)
+        blane = res.json()["data"]
         if not blane:
             return f"❌ Blane with ID {blane_id} not found."
     except Exception as e:
         return f"❌ Error fetching blane: {e}"
 
     blane_type = blane.get("type")
-    blane_time_type = blane.get("type_time")
-
-    
-
-    # Step 2: Calculate Total Cost
+    type_time = blane.get("type_time")
     base_price = float(blane.get("price_current", 0))
     total_price = base_price * quantity
 
-    # Step 3: Add delivery cost if order and physical
-    if blane["type"] == "order" and not blane.get("is_digital"):
+    # 🔸 Handle Delivery Cost (for orders)
+    if blane_type == "order" and not blane.get("is_digital"):
         if blane.get("city") != city:
             total_price += float(blane.get("livraison_out_city", 0))
         else:
             total_price += float(blane.get("livraison_in_city", 0))
 
-    # Step 4: Handle partiel payments
+    # 🔸 Handle Partial Payments
     partiel_price = 0
     if blane.get("partiel") and blane.get("partiel_field"):
         percent = float(blane["partiel_field"])
         partiel_price = round((percent / 100) * total_price)
 
-    english_to_french_days = {
-        "Monday": "Lundi", "Tuesday": "Mardi", "Wednesday": "Mercredi",
-        "Thursday": "Jeudi", "Friday": "Vendredi", "Saturday": "Samedi", "Sunday": "Dimanche"
-    }
+    # 🔸 Validate reservation date
+    today = datetime.today().date()
+    if date != "N/A":
+        try:
+            date_obj = datetime.strptime(date, "%Y-%m-%d").date()
+            if date_obj < today:
+                return f"❌ Reservation date {date} must not be in the past."
+        except Exception:
+            return f"❌ Invalid date format. Use YYYY-MM-DD."
 
-    current_date = datetime.now().strftime("%Y-%m-%d")
-    if date != "N/A" and date < current_date:
-        return f"❌ Invalid reservation date: {date}. Please choose a future date."
-
-    # Step 5: Validate time/date based on type
+    # 🔸 Reservation Logic
     if blane_type == "reservation":
         jours_open = blane.get("jours_creneaux", [])
         user_day = datetime.strptime(date, "%Y-%m-%d").strftime("%A")
-        user_day_fr = english_to_french_days.get(user_day, "")
+        user_day_fr = {
+            "Monday": "Lundi", "Tuesday": "Mardi", "Wednesday": "Mercredi",
+            "Thursday": "Jeudi", "Friday": "Vendredi", "Saturday": "Samedi", "Sunday": "Dimanche"
+        }.get(user_day, "")
 
-        if jours_open and user_day_fr.capitalize() not in jours_open:
-            return f"🚫 Blane is closed on {user_day}. Open days: {', '.join(jours_open)}"
+        if jours_open and user_day_fr not in jours_open:
+            return f"🚫 This blane is closed on {user_day}."
 
-        if blane_time_type == "time":
+        if type_time == "time":
             heure_debut = parse_time_only(blane["heure_debut"])
             heure_fin = parse_time_only(blane["heure_fin"])
-            slot_time = datetime.strptime(time, "%H:%M").time()
+            try:
+                slot_time = datetime.strptime(time, "%H:%M").time()
+            except:
+                return "❌ Invalid time format. Use HH:MM."
 
-            if not heure_debut or not heure_fin:
-                return f"❌ Invalid opening/closing time format in blane."
-
-            interval = int(blane["intervale_reservation"])
+            # Check time is in valid slots
             current = datetime.combine(datetime.today(), heure_debut)
-            end = datetime.combine(datetime.today(), heure_fin)
+            end_dt = datetime.combine(datetime.today(), heure_fin)
+            interval = int(blane["intervale_reservation"])
             valid_slots = []
 
-            while current <= end:
+            while current <= end_dt:
                 valid_slots.append(current.strftime("%H:%M"))
                 current += timedelta(minutes=interval)
 
             if time not in valid_slots:
-                return f"🕓 Invalid slot. Valid slots: {', '.join(valid_slots)}"
+                return f"🕓 Invalid time. Choose from: {', '.join(valid_slots)}"
 
-        else:
-            start = parse_datetime(blane.get("start_date"))
-            end = parse_datetime(blane.get("expiration_date"))
-            user_date = datetime.strptime(date, "%Y-%m-%d")
-            user_end_date = datetime.strptime(end_date, "%Y-%m-%d")
+        elif type_time == "date":
+            try:
+                start = parse_datetime(blane.get("start_date"))
+                end = parse_datetime(blane.get("expiration_date"))
+                user_date = datetime.strptime(date, "%Y-%m-%d")
+                user_end_date = datetime.strptime(end_date, "%Y-%m-%d")
+                if not (start.date() <= user_date.date() <= end.date()):
+                    return f"❌ Start date must be within {start.date()} to {end.date()}"
+                if not (start.date() <= user_end_date.date() <= end.date()):
+                    return f"❌ End date must be within {start.date()} to {end.date()}"
+            except:
+                return "❌ Invalid start or end date format."
 
-            if not start or not end:
-                return f"❌ Invalid start or expiration date format in blane."
+        payload = {
+            "blane_id": blane_id,
+            "name": name,
+            "email": email,
+            "phone": phone,
+            "city": city,
+            "date": date,
+            "end_date": end_date if type_time == "date" else None,
+            "time": time if type_time == "time" else None,
+            "quantity": quantity,
+            "number_persons": number_persons,
+            "payment_method": "cash",
+            "status": "pending",
+            "total_price": total_price - partiel_price,
+            "partiel_price": partiel_price,
+            "comments": comments
+        }
 
-            if not (start.date() <= user_date.date() <= end.date()):
-                return f"❌ Start date must be within {start.date()} to {end.date()}"
+    # 🔸 Order Logic
+    elif blane_type == "order":
+        if not delivery_address or delivery_address == "N/A":
+            return "📦 Please provide a valid delivery address."
 
-            if not (start.date() <= user_end_date.date() <= end.date()):
-                return f"❌ End date must be within {start.date()} to {end.date()}"
+        payload = {
+            "blane_id": blane_id,
+            "name": name,
+            "email": email,
+            "phone": phone,
+            "city": city,
+            "delivery_address": delivery_address,
+            "quantity": quantity,
+            "payment_method": "cash",
+            "status": "pending",
+            "total_price": total_price - partiel_price,
+            "partiel_price": partiel_price,
+            "comments": comments
+        }
 
-    # Step 6: Build Payload
-    payload = {
-        "blane_id": blane_id,
-        "name": name,
-        "email": email,
-        "phone": phone,
-        "city": city,
-        "date": date,
-        "end_date": end_date,
-        "time": time,
-        "comments": comments,
-        "quantity": quantity,
-        "number_persons": number_persons,
-        "status": "pending",
-        "total_price": total_price - partiel_price,
-        "payment_method": "cash",
-        "partiel_price": partiel_price
-    }
-    print(payload)
-    # Step 7: Send Reservation Request
+    else:
+        return "❌ Unknown blane type. Only 'reservation' or 'order' supported."
+
+    # 🔸 Create Reservation or Order
     try:
-        res = httpx.post(f"{BASEURLBACK}/reservations", headers=headers, json=payload)
+        API = ""
+        if blane_type == "reservation":
+            API = f"{BASEURLFRONT}/reservations"
+        elif blane_type == "order":
+            API = f"{BASEURLFRONT}/orders"
+
+        res = httpx.post(f"{API}", headers=headers, json=payload)
         res.raise_for_status()
-        reservation = res.json()
-        return f"✅ Reservation successful! Reservation Number: {reservation.get('reservation_number')}"
+        data = res.json()
+        return f"✅ Success! {data}"
     except Exception as e:
-        return f"❌ Error creating reservation: {str(e)}"
+        return f"❌ Error submitting reservation: {str(e)}"
+
+
+# @tool("create_reservation")
+# def create_reservation(session_id: str, blane_id: int, name: str = "N/A", email: str = "N/A", phone: str = "N/A", city: str = "N/A", date: str = "N/A", end_date: str = "N/A", time: str = "N/A", quantity: int = 1, number_persons: int = 0, comments: str = "N/A") -> str:
+#     """
+#     Handles reservation creation.
+#     IMPORTANT: Do not call this tool directly. Always call `before_create_reservation` first to determine required fields, collect them from the user, and then call this tool.
+#     """
+#     from datetime import datetime, timedelta
+#     import httpx
+
+#     token = get_token()
+#     if not token:
+#         return "❌ Failed to retrieve token."
+
+#     headers = {
+#         "Authorization": f"Bearer {token}",
+#         "Content-Type": "application/json"
+#     }
+
+#     # Step 1: Get blane info
+#     try:
+#         res = httpx.get(f"{BASEURLBACK}/blanes/{blane_id}", headers=headers)
+#         res.raise_for_status()
+#         # blane = next((b for b in res.json()["data"] if b["id"] == blane_id), None)
+#         if not blane:
+#             return f"❌ Blane with ID {blane_id} not found."
+#     except Exception as e:
+#         return f"❌ Error fetching blane: {e}"
+
+#     blane_type = blane.get("type")
+#     blane_time_type = blane.get("type_time")
+
+#     # Step 2: Calculate Total Cost
+#     base_price = float(blane.get("price_current", 0))
+#     total_price = base_price * quantity
+
+#     # Step 3: Add delivery cost if order and physical
+#     if blane["type"] == "order" and not blane.get("is_digital"):
+#         if blane.get("city") != city:
+#             total_price += float(blane.get("livraison_out_city", 0))
+#         else:
+#             total_price += float(blane.get("livraison_in_city", 0))
+
+#     # Step 4: Handle partiel payments
+#     partiel_price = 0
+#     if blane.get("partiel") and blane.get("partiel_field"):
+#         percent = float(blane["partiel_field"])
+#         partiel_price = round((percent / 100) * total_price)
+
+#     english_to_french_days = {
+#         "Monday": "Lundi", "Tuesday": "Mardi", "Wednesday": "Mercredi",
+#         "Thursday": "Jeudi", "Friday": "Vendredi", "Saturday": "Samedi", "Sunday": "Dimanche"
+#     }
+
+#     current_date = datetime.now().strftime("%Y-%m-%d")
+#     if date != "N/A" and date < current_date:
+#         return f"❌ Invalid reservation date: {date}. Please choose a future date."
+
+#     # Step 5: Validate time/date based on type
+#     if blane_type == "reservation":
+#         jours_open = blane.get("jours_creneaux", [])
+#         user_day = datetime.strptime(date, "%Y-%m-%d").strftime("%A")
+#         user_day_fr = english_to_french_days.get(user_day, "")
+
+#         if jours_open and user_day_fr.capitalize() not in jours_open:
+#             return f"🚫 Blane is closed on {user_day}. Open days: {', '.join(jours_open)}"
+
+#         if blane_time_type == "time":
+#             heure_debut = parse_time_only(blane["heure_debut"])
+#             heure_fin = parse_time_only(blane["heure_fin"])
+#             slot_time = datetime.strptime(time, "%H:%M").time()
+
+#             if not heure_debut or not heure_fin:
+#                 return f"❌ Invalid opening/closing time format in blane."
+
+#             interval = int(blane["intervale_reservation"])
+#             current = datetime.combine(datetime.today(), heure_debut)
+#             end = datetime.combine(datetime.today(), heure_fin)
+#             valid_slots = []
+
+#             while current <= end:
+#                 valid_slots.append(current.strftime("%H:%M"))
+#                 current += timedelta(minutes=interval)
+
+#             if time not in valid_slots:
+#                 return f"🕓 Invalid slot. Valid slots: {', '.join(valid_slots)}"
+
+#         else:
+#             start = parse_datetime(blane.get("start_date"))
+#             end = parse_datetime(blane.get("expiration_date"))
+#             user_date = datetime.strptime(date, "%Y-%m-%d")
+#             user_end_date = datetime.strptime(end_date, "%Y-%m-%d")
+
+#             if not start or not end:
+#                 return f"❌ Invalid start or expiration date format in blane."
+
+#             if not (start.date() <= user_date.date() <= end.date()):
+#                 return f"❌ Start date must be within {start.date()} to {end.date()}"
+
+#             if not (start.date() <= user_end_date.date() <= end.date()):
+#                 return f"❌ End date must be within {start.date()} to {end.date()}"
+
+#     # Step 6: Build Payload
+#     payload = {
+#         "blane_id": blane_id,
+#         "name": name,
+#         "email": email,
+#         "phone": phone,
+#         "city": city,
+#         "date": date,
+#         "end_date": end_date,
+#         "time": time,
+#         "comments": comments,
+#         "quantity": quantity,
+#         "number_persons": number_persons,
+#         "status": "pending",
+#         "total_price": total_price - partiel_price,
+#         "payment_method": "cash",
+#         "partiel_price": partiel_price
+#     }
+#     print(payload)
+#     # Step 7: Send Reservation Request
+#     try:
+#         res = httpx.post(f"{BASEURLBACK}/reservations", headers=headers, json=payload)
+#         res.raise_for_status()
+#         reservation = res.json()
+#         return f"✅ Reservation successful! Reservation Number: {reservation.get('reservation_number')}"
+#     except Exception as e:
+#         return f"❌ Error creating reservation: {str(e)}"
 
 
 @tool("list_reservations")
