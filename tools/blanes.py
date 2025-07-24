@@ -90,8 +90,8 @@ def authenticate_email(session_id: str, client_email: str) -> str:
 @tool("list_blanes")
 def blanes_list() -> str:
     """
-    Lists all active Blanes using the provided token.
-    Returns a readable list with name, price, and ID.
+    Lists all active Blanes.
+    Returns a readable list with name, price, ID, BlaneType, TimeType.
     """
     token = get_token()
     if not token:
@@ -122,7 +122,8 @@ def blanes_list() -> str:
 
         output = []
         for i, blane in enumerate(blanes, start=1):
-            output.append(f"{i}. {blane['name']} — Rs. {blane['price_current']} (ID: {blane['id']})")
+            # print(f"{i}. {blane['name']} — Rs. {blane['price_current']} (ID: {blane['id']}) - BlaneType: {blane['type']} - TimeType {blane['type_time']}")
+            output.append(f"{i}. {blane['name']} — Rs. {blane['price_current']} (ID: {blane['id']}) - BlaneType: {blane['type']} - TimeType: {blane['type_time']}")
 
         return "\n".join(output)
 
@@ -317,15 +318,15 @@ def prepare_reservation_prompt(blane_id: int) -> str:
         msg += f"6. *Delivery Address*: (Place where order has to be delivered)\n"
         msg += f"7. *Comments*: (Any special instructions?)\n"
     elif is_reservation and type_time == "time":
-        msg += f"4. *Date*: (Available: {date_range})\n"
-        msg += f"5. *Time*: (Available slots: {slots})\n"
-        msg += f"6. *Quantity*: (How many slots?)\n"
+        msg += f"4. *Date*: (Available: {date_range}) Date Format: DD-MM-YYYY\n"
+        msg += f"5. *Time*: (Available slots: {slots}) Time Format: HH:MM\n"
+        msg += f"6. *Quantity*: (How many units?)\n"
         msg += f"7. *Number of Persons*: (People attending)\n"
         msg += f"8. *Comments*: (Any requests?)\n"
     elif is_reservation and type_time == "date":
-        msg += f"4. *Start Date*: (Between {date_range})\n"
-        msg += f"5. *End Date*: (Between {date_range})\n"
-        msg += f"6. *Quantity*: \n"
+        msg += f"4. *Start Date*: (Between {date_range}) Date Format: DD-MM-YYYY\n"
+        msg += f"5. *End Date*: (Between {date_range}) Date Format: DD-MM-YYYY\n"
+        msg += f"6. *Quantity*: (How many units?)\n"
         msg += f"7. *Number of Persons*: (People attending)\n"
         msg += f"8. *Comments*: (Any requests?)\n"
 
@@ -495,6 +496,9 @@ def create_reservation(
         elif blane_type == "order":
             API = f"{BASEURLFRONT}/orders"
 
+        print(payload)
+        print(API)
+
         res = httpx.post(f"{API}", headers=headers, json=payload)
         res.raise_for_status()
         data = res.json()
@@ -502,6 +506,45 @@ def create_reservation(
     except Exception as e:
         return f"❌ Error submitting reservation: {str(e)}"
 
+
+@tool("list_reservations")
+def list_reservations(email: str) -> str:
+    """
+    Get the list of the authenticated user's reservations.
+    Requires user's email.
+    """
+
+    token = get_token()
+    if not token:
+        return {"error": "❌ Failed to retrieve token."}
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+
+    result = {
+        "reservations": [],
+        "orders": []
+    }
+
+    # Fetch Reservations
+    res_url = f"{BASEURLBACK}/reservations?email={email}"
+    res_response = requests.get(res_url, headers=headers)
+    if res_response.status_code == 200:
+        result["reservations"] = res_response.json().get("data", [])
+    else:
+        result["reservations_error"] = res_response.text
+
+    # Fetch Orders
+    orders_url = f"{BASEURLBACK}/orders?email={email}"
+    orders_response = requests.get(orders_url, headers=headers)
+    if orders_response.status_code == 200:
+        result["orders"] = orders_response.json().get("data", [])
+    else:
+        result["orders_error"] = orders_response.text
+
+    return result
 
 # @tool("create_reservation")
 # def create_reservation(session_id: str, blane_id: int, name: str = "N/A", email: str = "N/A", phone: str = "N/A", city: str = "N/A", date: str = "N/A", end_date: str = "N/A", time: str = "N/A", quantity: int = 1, number_persons: int = 0, comments: str = "N/A") -> str:
@@ -633,40 +676,40 @@ def create_reservation(
 #         return f"❌ Error creating reservation: {str(e)}"
 
 
-@tool("list_reservations")
-def list_reservations(email: str) -> str:
-    """
-    Get the list of the authenticated user's reservations.
-    Requires user's email.
-    """
+# @tool("list_reservations")
+# def list_reservations(email: str) -> str:
+#     """
+#     Get the list of the authenticated user's reservations.
+#     Requires user's email.
+#     """
 
-    token = get_token()
-    if not token:
-        return "❌ Failed to retrieve token."
+#     token = get_token()
+#     if not token:
+#         return "❌ Failed to retrieve token."
 
-    url = f"{BASEURLBACK}/reservations?email={email}"
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json"
-    }
+#     url = f"{BASEURLBACK}/reservations?email={email}"
+#     headers = {
+#         "Authorization": f"Bearer {token}",
+#         "Content-Type": "application/json"
+#     }
 
-    response = requests.get(url, headers=headers)
-    print(response)
+#     response = requests.get(url, headers=headers)
+#     print(response)
 
-    if response.status_code != 200:
-        return f"❌ Failed to fetch reservations: {response.text}"
+#     if response.status_code != 200:
+#         return f"❌ Failed to fetch reservations: {response.text}"
 
-    data = response.json()["data"]
-    if not data:
-        return "📭 You have no reservations at the moment."
+#     data = response.json()["data"]
+#     if not data:
+#         return "📭 You have no reservations at the moment."
 
-    return data
+#     return data
     
-    # message = "📋 Your Reservations:\n"
-    # for res in data:
-    #     message += f"- Ref: {res['NUM_RES']} | Blane ID: {res['blane_id']} | {res['date']} at {res['time']} ({res['status']})\n"
+#     # message = "📋 Your Reservations:\n"
+#     # for res in data:
+#     #     message += f"- Ref: {res['NUM_RES']} | Blane ID: {res['blane_id']} | {res['date']} at {res['time']} ({res['status']})\n"
 
-    # return message.strip()
+#     # return message.strip()
 
 
 @tool("Search_blanes_by_location")
