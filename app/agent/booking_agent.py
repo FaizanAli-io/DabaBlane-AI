@@ -72,10 +72,10 @@ district_map = {
         "ben m’sick",
         "sbata"
     ],
-    "maarif":[
-        "timtoun",
-        "lepit"
-    ],
+    # "maarif":[
+    #     "timtoun",
+    #     "lepit"
+    # ],
     "surroundings": [
         "bouskoura",
         "la ville verte",

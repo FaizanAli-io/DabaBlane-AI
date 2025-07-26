@@ -711,12 +711,68 @@ def list_reservations(email: str) -> str:
 
 #     # return message.strip()
 
+district_map = {
+    "anfa": [
+        "bourgogne",
+        "sidi belyout (centre ville, médina)",
+        "maârif",
+        "ain diab (corniche)",
+        "gauthier",
+        "racine",
+        "palmier",
+        "triangle d’or",
+        "oasis",
+        "cil"
+    ],
+    "hay hassani": [
+        "hay hassani",
+        "oulfa",
+        "errahma",
+        "lissasfa"
+    ],
+    "aïn chock": [
+        "aïn chock",
+        "sidi maârouf",
+        "californie",
+        "polo"
+    ],
+    "aïn sebaâ – hay mohammadi": [
+        "aïn sebaâ",
+        "hay mohammadi",
+        "roches noires (belvédère)"
+    ],
+    "al fida – mers sultan": [
+        "al fida",
+        "mers sultan",
+        "derb sultan",
+        "habous"
+    ],
+    "sidi bernoussi – sidi moumen": [
+        "sidi bernoussi",
+        "sidi moumen",
+        "zenata"
+    ],
+    "moulay rachid – ben m’sick": [
+        "moulay rachid",
+        "sidi othmane",
+        "ben m’sick",
+        "sbata"
+    ],
+    "surroundings": [
+        "bouskoura",
+        "la ville verte",
+        "dar bouazza",
+        "mohammedia",
+        "bouznika"
+    ]
+}
 
 @tool("Search_blanes_by_location")
 def search_blanes_by_location(district: str, sub_district: str = "") -> str:
     """
     Retrieves blanes based on sub-district first. If fewer than 3 are found,
-    falls back to district-level matching and informs the user accordingly.
+    falls back to all sub-districts in the district. If still insufficient,
+    falls back to any district-level matches.
     """
     token = get_token()
     if not token:
@@ -741,47 +797,136 @@ def search_blanes_by_location(district: str, sub_district: str = "") -> str:
     except Exception as e:
         return f"❌ Error fetching blanes: {e}"
 
-    district_lower = district.lower()
-    sub_district_lower = sub_district.lower()
+    district_lower = district.lower().strip()
+    sub_district_lower = sub_district.lower().strip()
 
-    # Step 1: Filter for sub-district matches
+    # Get all sub-districts in the specified district
+    all_subs_in_district = district_map.get(district_lower, [])
+    all_subs_in_district_cleaned = [s.lower() for s in all_subs_in_district]
+
     sub_matches = []
+    district_matches = []
+
     for blane in blanes:
         desc = (blane.get("description") or "").lower()
-        if district_lower in desc and sub_district_lower in desc:
-            sub_matches.append(blane["id"])
+        blane_id = blane["id"]
 
-    # Step 2: If less than 3, add more from district-level
-    district_matches = sub_matches.copy()
+        if sub_district_lower and sub_district_lower in desc:
+            sub_matches.append(blane_id)
+        elif not sub_district_lower:
+            # Look for matches across all sub-districts in district
+            for sd in all_subs_in_district_cleaned:
+                if sd in desc:
+                    sub_matches.append(blane_id)
+                    break
+
+    # If fewer than 3 found, look again for any sub-districts in this district
     if len(sub_matches) < 3:
         for blane in blanes:
             desc = (blane.get("description") or "").lower()
-            if district_lower in desc and blane["id"] not in district_matches:
-                district_matches.append(blane["id"])
+            blane_id = blane["id"]
+            if blane_id in sub_matches:
+                continue
+            for sd in all_subs_in_district_cleaned:
+                if sd in desc:
+                    district_matches.append(blane_id)
+                    break
 
-    # Step 3: Prepare results
-    if not district_matches:
+    total_matches = sub_matches + [id for id in district_matches if id not in sub_matches]
+
+    if not total_matches:
         return f"❌ No blanes found in district *{district}* or sub-district *{sub_district}*."
 
-    # Step 4: Generate summary message
+    # Intro message
     sub_count = len(sub_matches)
-    district_only_count = len(district_matches) - sub_count
-    total = len(district_matches)
+    district_only_count = len(total_matches) - sub_count
 
     if sub_count == 0:
-        intro_msg = f"ℹ️ I couldn't find any blanes in *{sub_district}*, but I did find {district_only_count} in *{district}*."
+        intro_msg = f"ℹ️ I couldn't find any blanes in *{sub_district or district}*, but I did find {district_only_count} in sub-districts of *{district}*."
     elif sub_count < 3:
-        intro_msg = f"✅ I found {sub_count} blane(s) in *{sub_district}*, and {district_only_count} more in *{district}*."
+        intro_msg = f"✅ I found {sub_count} blane(s) in *{sub_district or district}*, and {district_only_count} more in sub-districts of *{district}*."
     else:
-        intro_msg = f"✅ I found {sub_count} blane(s) in *{sub_district}*."
+        intro_msg = f"✅ I found {sub_count} blane(s) in *{sub_district or district}*."
 
-    # Step 5: Fetch and list blane info
+    # Fetch and list blane info
     result_msgs = []
-    for blane_id in district_matches:
+    for blane_id in total_matches:
         info = get_blane_info.invoke({"blane_id": blane_id})
         result_msgs.append(info)
 
     return intro_msg + "\n\n" + "\n\n".join(result_msgs)
+
+
+# @tool("Search_blanes_by_location")
+# def search_blanes_by_location(district: str, sub_district: str = "") -> str:
+#     """
+#     Retrieves blanes based on sub-district first. If fewer than 3 are found,
+#     falls back to district-level matching and informs the user accordingly.
+#     """
+#     token = get_token()
+#     if not token:
+#         return "❌ Failed to retrieve token. Please try again later."
+
+#     headers = {
+#         "Authorization": f"Bearer {token}",
+#         "Content-Type": "application/json"
+#     }
+
+#     params = {
+#         "status": "active",
+#         "sort_by": "created_at",
+#         "sort_order": "desc",
+#         "pagination_size": 100
+#     }
+
+#     try:
+#         response = httpx.get(f"{BASEURLBACK}/blanes", headers=headers, params=params)
+#         response.raise_for_status()
+#         blanes = response.json().get("data", [])
+#     except Exception as e:
+#         return f"❌ Error fetching blanes: {e}"
+
+#     district_lower = district.lower()
+#     sub_district_lower = sub_district.lower()
+
+#     # Step 1: Filter for sub-district matches
+#     sub_matches = []
+#     for blane in blanes:
+#         desc = (blane.get("description") or "").lower()
+#         if district_lower in desc and sub_district_lower in desc:
+#             sub_matches.append(blane["id"])
+
+#     # Step 2: If less than 3, add more from district-level
+#     district_matches = sub_matches.copy()
+#     if len(sub_matches) < 3:
+#         for blane in blanes:
+#             desc = (blane.get("description") or "").lower()
+#             if district_lower in desc and blane["id"] not in district_matches:
+#                 district_matches.append(blane["id"])
+
+#     # Step 3: Prepare results
+#     if not district_matches:
+#         return f"❌ No blanes found in district *{district}* or sub-district *{sub_district}*."
+
+#     # Step 4: Generate summary message
+#     sub_count = len(sub_matches)
+#     district_only_count = len(district_matches) - sub_count
+#     total = len(district_matches)
+
+#     if sub_count == 0:
+#         intro_msg = f"ℹ️ I couldn't find any blanes in *{sub_district}*, but I did find {district_only_count} in *{district}*."
+#     elif sub_count < 3:
+#         intro_msg = f"✅ I found {sub_count} blane(s) in *{sub_district}*, and {district_only_count} more in *{district}*."
+#     else:
+#         intro_msg = f"✅ I found {sub_count} blane(s) in *{sub_district}*."
+
+#     # Step 5: Fetch and list blane info
+#     result_msgs = []
+#     for blane_id in district_matches:
+#         info = get_blane_info.invoke({"blane_id": blane_id})
+#         result_msgs.append(info)
+
+#     return intro_msg + "\n\n" + "\n\n".join(result_msgs)
 
 
 # @tool("create_reservation")
