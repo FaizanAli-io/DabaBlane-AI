@@ -1,23 +1,31 @@
-from fastapi import APIRouter, Request
-import os
-import httpx
+# from fastapi import APIRouter, Request
+from fastapi.responses import PlainTextResponse
 from dotenv import load_dotenv
 from datetime import datetime
+import os
+import httpx
+import logging
+import traceback
+
 from app.agent.booking_agent import BookingToolAgent
 from app.database import SessionLocal
 from app.chatbot.models import Session as SessionModel, Message
-from fastapi.responses import PlainTextResponse
 from app.format_message import formatting
+
+# Load environment variables
 load_dotenv()
 
-router = APIRouter()
-agent = BookingToolAgent()
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
+# Config
 VERIFY_TOKEN = "my_custom_secret_token"
 WHATSAPP_TOKEN = os.getenv("META_ACCESS_TOKEN")
 PHONE_NUMBER_ID = os.getenv("META_PHONE_NUMBER_ID")
 
-
+router = APIRouter()
+agent = BookingToolAgent()
 
 
 @router.get("/meta-webhook")
@@ -28,72 +36,65 @@ def verify_webhook(request: Request):
     return PlainTextResponse("Invalid token", status_code=403)
 
 
-
 @router.post("/meta-webhook")
 async def receive_message(request: Request):
-    data = await request.json()
-    print("📩 Incoming:", data)
-
     db = SessionLocal()
+
     try:
-        entry = data["entry"][0]
-        changes = entry["changes"][0]
-        value = changes["value"]
+        data = await request.json()
+        logger.info("📩 Incoming data: %s", data)
+
+        entry = data.get("entry", [])[0]
+        changes = entry.get("changes", [])[0]
+        value = changes.get("value", {})
         messages = value.get("messages")
 
         if not messages:
+            logger.info("🔕 No new message received.")
             return {"status": "ignored"}
 
-        wa_id = messages[0]["from"]
-        text = messages[0]["text"]["body"]
+        message = messages[0]
+        wa_id = message["from"]
         session_id = wa_id
 
-        # --- Check for existing session ---
-        session = db.query(SessionModel).filter_by(id=session_id).first()
+        # Ensure it's a text message
+        if "text" not in message:
+            logger.warning("⚠️ Non-text message received. Ignored.")
+            return {"status": "ignored"}
 
+        text = message["text"]["body"]
+        logger.info(f"✅ Message from {wa_id}: {text}")
+
+        # --- Session handling ---
+        session = db.query(SessionModel).filter_by(id=session_id).first()
         if not session:
-            session = SessionModel(
-                id=session_id,
-                whatsapp_number=wa_id
-            )
+            session = SessionModel(id=session_id, whatsapp_number=wa_id)
             db.add(session)
             db.commit()
 
         # --- Save user message ---
-        db.add(Message(
-            session_id=session_id,
-            sender="user",
-            content=text,
-            timestamp=datetime.utcnow()
-        ))
+        db.add(Message(session_id=session_id, sender="user", content=text, timestamp=datetime.utcnow()))
         db.commit()
 
-        # --- Get bot reply ---
+        # --- Get bot response ---
         response = agent.get_response(incoming_text=text, session_id=session_id)
-        
-        # formatted response
-        response = formatting(response)
+        formatted_response = formatting(response)
 
         # --- Save bot response ---
-        db.add(Message(
-            session_id=session_id,
-            sender="bot",
-            content=response,
-            timestamp=datetime.utcnow()
-        ))
+        db.add(Message(session_id=session_id, sender="bot", content=formatted_response, timestamp=datetime.utcnow()))
         db.commit()
 
-        print(f"🤖 Agent Reply: {response}")
-        await send_whatsapp_message(wa_id, response)
+        logger.info(f"🤖 Bot reply to {wa_id}: {formatted_response}")
+        await send_whatsapp_message(wa_id, formatted_response)
 
     except Exception as e:
-        print("❌ Error in webhook:", e)
+        logger.error("❌ Exception in webhook: %s", e)
+        traceback.print_exc()
 
     finally:
-        db.close() 
+        db.close()
 
     return {"status": "ok"}
-
 
 
 async def send_whatsapp_message(recipient_number: str, message: str):
@@ -109,7 +110,12 @@ async def send_whatsapp_message(recipient_number: str, message: str):
         "text": {"body": message}
     }
 
-    async with httpx.AsyncClient() as client:
-        response = await client.post(url, json=payload, headers=headers)
-        if response.status_code != 200:
-            print("❌ Failed to send:", response.text)
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(url, json=payload, headers=headers)
+            if response.status_code != 200:
+                logger.error("❌ WhatsApp send failed: %s", response.text)
+            else:
+                logger.info("✅ Message sent successfully to %s", recipient_number)
+    except httpx.RequestError as e:
+        logger.error("❌ Network error while sending message: %s", e)
