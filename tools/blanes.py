@@ -4,12 +4,12 @@ import requests
 from datetime import datetime
 from app.chatbot.models import Session
 from app.database import SessionLocal
-BASEURLFRONT = "https://dbapi.escalarmedia.com/api/front/v1"
-BASEURLBACK = "https://dbapi.escalarmedia.com/api/back/v1"
+BASEURLFRONT = "https://api.dabablane.com/api/front/v1"
+BASEURLBACK = "https://api.dabablane.com/api/back/v1"
 
 def get_token():
 
-    url = f"https://dbapi.escalarmedia.com/api/login"
+    url = f"https://api.dabablane.com/api/login"
     headers = {
         "Content-Type": "application/json"
     }
