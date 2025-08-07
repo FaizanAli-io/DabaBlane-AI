@@ -87,7 +87,7 @@ def authenticate_email(session_id: str, client_email: str) -> str:
     return f"Authenticated {client_email} for session {session_id}"
 
 
-@tool("list_blanes",return_direct=True)
+@tool("list_blanes")
 def blanes_list() -> str:
     """
     Lists all active Blanes.
