@@ -87,7 +87,7 @@ def authenticate_email(session_id: str, client_email: str) -> str:
     return f"Authenticated {client_email} for session {session_id}"
 
 
-@tool("list_blanes")
+@tool("list_blanes",return_direct=True)
 def blanes_list() -> str:
     """
     Lists all active Blanes.
@@ -96,34 +96,54 @@ def blanes_list() -> str:
     token = get_token()
     if not token:
         return "❌ Failed to retrieve token. Please try again later."
+    
     url = f"{BASEURLBACK}/blanes"
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json"
     }
 
-    response = requests.get(url, headers=headers)
-    print(response)
+    all_blanes = []
+    page = 1
     
-    params = {
-        "status": "active",
-        "sort_by": "created_at",
-        "sort_order": "desc",
-        "pagination_size": 20 # or any size you want
-    }
-
     try:
-        response = httpx.get(url, headers=headers, params=params)
-        response.raise_for_status()
-        blanes = response.json().get("data", [])
+        while True:
+            params = {
+                "status": "active",
+                "sort_by": "created_at",
+                "sort_order": "desc",
+                "per_page": 10,
+                "page": page
+            }
+            
+            response = httpx.get(url, headers=headers, params=params)
+            response.raise_for_status()
+            data = response.json()
+            
+            # Fix: Get the actual data array, not the total count
+            blanes = data.get('data', [])  # This should be the array of blanes
+            
+            if not blanes:
+                break
+                
+            all_blanes.extend(blanes)
+            
+            # Check if we've got all items
+            total_blanes = data.get('meta', {}).get('total', 0)
+            print(f"Page {page}: Got {len(blanes)} blanes, Total so far: {len(all_blanes)}/{total_blanes}")
+            
+            if len(all_blanes) >= total_blanes:
+                print(f"Exiting loop: {len(all_blanes)}")
+                break
+                
+            page += 1
 
-        if not blanes:
+        if not all_blanes:
             return "No blanes found."
 
         output = []
-        for i, blane in enumerate(blanes, start=1):
-            # print(f"{i}. {blane['name']} — Rs. {blane['price_current']} (ID: {blane['id']}) - BlaneType: {blane['type']} - TimeType {blane['type_time']}")
-            output.append(f"{i}. {blane['name']} — Rs. {blane['price_current']} (ID: {blane['id']}) - BlaneType: {blane['type']} - TimeType: {blane['type_time']}")
+        for i, blane in enumerate(all_blanes, start=1):
+            output.append(f"{i}. {blane['name']} — MAD. {blane['price_current']} (ID: {blane['id']}) - BlaneType: {blane['type']} - TimeType: {blane['type_time']}")
 
         return "\n".join(output)
 
