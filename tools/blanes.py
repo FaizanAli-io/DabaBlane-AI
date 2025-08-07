@@ -133,6 +133,133 @@ def blanes_list() -> str:
         return f"❌ Error fetching blanes: {str(e)}"
 
 
+@tool("get_available_time_slots")
+def get_available_time_slots(blane_id: int, date: str) -> str:
+    """
+    Retrieves available time slots for a specific blane on a given date using blane ID.
+    Only returns slots that are available, along with their remaining capacity.
+
+    Parameters:
+    - blane_id: The ID of the blane (integer)
+    - date: The date to check availability for (format: YYYY-MM-DD)
+    """
+    token = get_token()
+    if not token:
+        return "❌ Failed to retrieve token. Please try again later."
+
+    # Step 1: Get blane details directly
+    url = f"{BASEURLBACK}/blanes/{blane_id}"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+
+    try:
+        response = httpx.get(url, headers=headers)
+        response.raise_for_status()
+        blane = response.json().get("data", {})
+
+        if not blane:
+            return f"❌ Blane with ID {blane_id} not found."
+
+        if blane.get("type") != "reservation" or blane.get("type_time") != "time":
+            return "❌ Unsupported reservation type returned by the API."
+
+        slug = blane.get("slug")
+        if not slug:
+            return "❌ Could not find slug for this blane."
+
+        # Step 2: Get available time slots using slug
+        slots_url = f"{BASEURLFRONT}/blanes/{slug}/available-time-slots"
+        slot_params = {"date": date}
+
+        slots_response = httpx.get(slots_url, headers=headers, params=slot_params)
+        slots_response.raise_for_status()
+        result = slots_response.json()
+
+        if result.get("type") != "time":
+            return "❌ Unsupported reservation type returned by the API."
+
+        time_slots = result.get("data", [])
+        available_slots = [
+            f"- {slot['time']} → {slot['remainingCapacity']} spots"
+            for slot in time_slots if slot["available"]
+        ]
+
+        if not available_slots:
+            return f"No available time slots for '{blane['name']}' on {date}."
+
+        output = [f"🗓 Available Time Slots for '{blane['name']}' on {date}:"]
+        output.extend(available_slots)
+        return "\n".join(output)
+
+    except httpx.HTTPStatusError as e:
+        return f"❌ HTTP Error {e.response.status_code}: {e.response.text}"
+    except Exception as e:
+        return f"❌ Error: {str(e)}"
+
+
+@tool("get_available_periods")
+def get_available_periods(blane_id: int) -> str:
+    """
+    Retrieves available periods for a date-based reservation blane using its ID.
+    Only shows periods that are available, along with remaining capacity.
+
+    Parameters:
+    - blane_id: The ID of the blane (integer)
+    """
+    token = get_token()
+    if not token:
+        return "❌ Failed to retrieve token. Please try again later."
+
+    # Step 1: Get blane info by ID
+    url = f"{BASEURLBACK}/blanes/{blane_id}"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+
+    try:
+        response = httpx.get(url, headers=headers)
+        response.raise_for_status()
+        blane = response.json().get("data", {})
+
+        if not blane:
+            return f"❌ Blane with ID {blane_id} not found."
+
+        if blane.get("type") != "reservation" or blane.get("type_time") != "date":
+            return "❌ Unsupported reservation type returned by the API."
+
+        slug = blane.get("slug")
+        if not slug:
+            return "❌ Could not find slug for this blane."
+
+        # Step 2: Get detailed info including available periods using slug
+        front_url = f"{BASEURLFRONT}/blanes/{slug}"
+        front_response = httpx.get(front_url, headers=headers)
+        front_response.raise_for_status()
+        detailed_blane = front_response.json().get("data", {})
+
+        available_periods = detailed_blane.get("available_periods", [])
+        available_periods = [p for p in available_periods if p.get("available")]
+
+        if not available_periods:
+            return f"No available periods found for '{blane['name']}'."
+
+        output = [f"📅 Available Periods for '{blane['name']}':"]
+        for period in available_periods:
+            output.append(
+                f"- {period['period_name']} → {period['remainingCapacity']} spots"
+            )
+
+        return "\n".join(output)
+
+    except httpx.HTTPStatusError as e:
+        return f"❌ HTTP Error {e.response.status_code}: {e.response.text}"
+    except Exception as e:
+        return f"❌ Error fetching periods: {str(e)}"
+
+
 @tool("blanes_info")
 def get_blane_info(blane_id: int):
     """

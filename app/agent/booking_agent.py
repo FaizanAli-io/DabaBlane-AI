@@ -15,6 +15,8 @@ from tools.blanes import (
     prepare_reservation_prompt,
     search_blanes_by_location,
     authenticate_email,
+    get_available_time_slots,
+    get_available_periods,
 )
 # from tools.booking_tools import (
 #     is_authenticated,
@@ -194,7 +196,9 @@ class BookingToolAgent:
             get_blane_info,
             prepare_reservation_prompt,
             search_blanes_by_location,
-            authenticate_email
+            authenticate_email,
+            get_available_time_slots,
+            get_available_periods
         ]
 
         self.llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
