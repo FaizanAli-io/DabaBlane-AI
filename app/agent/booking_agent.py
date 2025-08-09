@@ -17,6 +17,7 @@ from tools.blanes import (
     authenticate_email,
     get_available_time_slots,
     get_available_periods,
+    handle_user_pagination_response
 )
 # from tools.booking_tools import (
 #     is_authenticated,
@@ -187,7 +188,8 @@ class BookingToolAgent:
             search_blanes_by_location,
             authenticate_email,
             get_available_time_slots,
-            get_available_periods
+            get_available_periods,
+            handle_user_pagination_response
         ]
 
         self.llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)

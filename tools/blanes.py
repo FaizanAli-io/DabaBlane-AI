@@ -87,71 +87,228 @@ def authenticate_email(session_id: str, client_email: str) -> str:
     return f"Authenticated {client_email} for session {session_id}"
 
 
+# @tool("list_blanes")
+# def blanes_list(page_num: int = 1) -> str:
+#     """
+#     Lists active Blanes with pagination.
+#     Shows 10 blanes per page.
+    
+#     Args:
+#         page_num: Page number to display from session (default: 1)
+    
+#     Returns a readable list with pagination info.
+#     """
+#     # Since page_num comes from session, no need for global variables
+    
+#     token = get_token()
+#     if not token:
+#         return "❌ Failed to retrieve token. Please try again later."
+    
+#     # Get cached blanes from session (you'll need to implement session storage)
+#     # cached_blanes = get_from_session('cached_blanes') or []
+    
+#     # For now, we'll always fetch fresh data - you can optimize this later with proper session caching
+#     url = f"{BASEURLBACK}/blanes"
+#     headers = {
+#         "Authorization": f"Bearer {token}",
+#         "Content-Type": "application/json"
+#     }
+
+#     all_blanes = []
+#     api_page = 1
+    
+#     try:
+#         while True:
+#             params = {
+#                 "status": "active",
+#                 "sort_by": "created_at",
+#                 "sort_order": "desc",
+#                 "per_page": 10,
+#                 "page": api_page
+#             }
+            
+#             response = httpx.get(url, headers=headers, params=params)
+#             response.raise_for_status()
+#             data = response.json()
+            
+#             blanes = data.get('data', [])
+            
+#             if not blanes:
+#                 break
+                
+#             all_blanes.extend(blanes)
+            
+#             # Check if we've got all items
+#             total_blanes = data.get('meta', {}).get('total', 0)
+            
+#             if len(all_blanes) >= total_blanes:
+#                 break
+                
+#             api_page += 1
+
+#         # Store in session/cache for pagination
+#         # set_session('cached_blanes', all_blanes)
+#         cached_blanes = all_blanes
+        
+#     except httpx.HTTPStatusError as e:
+#         return f"❌ HTTP Error {e.response.status_code}: {e.response.text}"
+#     except Exception as e:
+#         return f"❌ Error fetching blanes: {str(e)}"
+
+#     if not cached_blanes:
+#         return "No blanes found."
+
+#     # Calculate pagination
+#     total_blanes = len(cached_blanes)
+#     per_page = 10
+#     total_pages = (total_blanes + per_page - 1) // per_page  # Ceiling division
+    
+#     # Validate page number
+#     if page_num < 1 or page_num > total_pages:
+#         return f"❌ Invalid page number. Please choose between 1 and {total_pages}."
+    
+#     # Get blanes for current page
+#     start_index = (page_num - 1) * per_page
+#     end_index = min(start_index + per_page, total_blanes)
+#     page_blanes = cached_blanes[start_index:end_index]
+    
+#     # Build output
+#     output = []
+    
+#     # Add header with pagination info
+#     output.append(f"📋 Blanes List (Page {page_num} of {total_pages})")
+#     output.append(f"Showing {start_index + 1}-{end_index} of {total_blanes} total blanes")
+#     output.append("")
+    
+#     # Add blanes for this page
+#     for i, blane in enumerate(page_blanes, start=start_index + 1):
+#         output.append(f"{i}. {blane['name']} — MAD. {blane['price_current']} (ID: {blane['id']}) - BlaneType: {blane['type']} - TimeType: {blane['type_time']}")
+    
+#     # Add navigation hints
+#     output.append("")
+#     if page_num < total_pages:
+#         output.append(f"💡 Voulez-vous voir les 10 suivants? (Do you want to see the next 10?)")
+#     if page_num > 1:
+#         output.append(f"💡 Retourner aux 10 précédents? (Go back to previous 10?)")
+    
+#     return "\n".join(output)
 @tool("list_blanes")
-def blanes_list() -> str:
+def blanes_list(page_num: int = 1) -> str:
     """
-    Lists all active Blanes.
-    Returns a readable list with name, price, ID, BlaneType, TimeType.
+    Lists active Blanes with pagination.
+    Shows 10 blanes per page.
+    
+    Args:
+        page_num: Page number to display from session (default: 1)
+    
+    Returns a readable list with pagination info.
     """
+    # Since page_num comes from session, no need for global variables
+    
     token = get_token()
     if not token:
         return "❌ Failed to retrieve token. Please try again later."
     
+    # Fetch only the specific page we need
     url = f"{BASEURLBACK}/blanes"
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json"
     }
 
-    all_blanes = []
-    page = 1
-    
     try:
-        while True:
-            params = {
-                "status": "active",
-                "sort_by": "created_at",
-                "sort_order": "desc",
-                "per_page": 10,
-                "page": page
-            }
-            
-            response = httpx.get(url, headers=headers, params=params)
-            response.raise_for_status()
-            data = response.json()
-            
-            # Fix: Get the actual data array, not the total count
-            blanes = data.get('data', [])  # This should be the array of blanes
-            
-            if not blanes:
-                break
-                
-            all_blanes.extend(blanes)
-            
-            # Check if we've got all items
-            total_blanes = data.get('meta', {}).get('total', 0)
-            print(f"Page {page}: Got {len(blanes)} blanes, Total so far: {len(all_blanes)}/{total_blanes}")
-            
-            if len(all_blanes) >= total_blanes:
-                print(f"Exiting loop: {len(all_blanes)}")
-                break
-                
-            page += 1
-
-        if not all_blanes:
-            return "No blanes found."
-
-        output = []
-        for i, blane in enumerate(all_blanes, start=1):
-            output.append(f"{i}. {blane['name']} — MAD. {blane['price_current']} (ID: {blane['id']}) - BlaneType: {blane['type']} - TimeType: {blane['type_time']}")
-
-        return "\n".join(output)
-
+        params = {
+            "status": "active",
+            "sort_by": "created_at",
+            "sort_order": "desc",
+            "per_page": 10,
+            "page": page_num
+        }
+        
+        response = httpx.get(url, headers=headers, params=params)
+        response.raise_for_status()
+        data = response.json()
+        
+        page_blanes = data.get('data', [])
+        meta = data.get('meta', {})
+        total_blanes = meta.get('total', 0)
+        per_page = meta.get('per_page', 10)
+        current_page = meta.get('current_page', page_num)
+        
+        if not page_blanes:
+            if page_num == 1:
+                return "No blanes found."
+            else:
+                total_pages = (total_blanes + per_page - 1) // per_page
+                return f"❌ Invalid page number. Please choose between 1 and {total_pages}."
+        
+        total_pages = (total_blanes + per_page - 1) // per_page
+        
     except httpx.HTTPStatusError as e:
         return f"❌ HTTP Error {e.response.status_code}: {e.response.text}"
     except Exception as e:
         return f"❌ Error fetching blanes: {str(e)}"
+    
+    # Build output
+    output = []
+    
+    # Add header with pagination info
+    output.append(f"📋 Blanes List (Page {current_page} of {total_pages})")
+    
+    # Calculate display range
+    start_display = (current_page - 1) * per_page + 1
+    end_display = min(start_display + len(page_blanes) - 1, total_blanes)
+    output.append(f"Showing {start_display}-{end_display} of {total_blanes} total blanes")
+    output.append("")
+    
+    # Add blanes for this page
+    for i, blane in enumerate(page_blanes, start=start_display):
+        output.append(f"{i}. {blane['name']} — MAD. {blane['price_current']} (ID: {blane['id']}) - BlaneType: {blane['type']} - TimeType: {blane['type_time']}")
+    
+    # Add navigation hints
+    output.append("")
+    if current_page < total_pages:
+        output.append(f"💡 Voulez-vous voir les 10 suivants? (Do you want to see the next 10?)")
+    if current_page > 1:
+        output.append(f"💡 Retourner aux 10 précédents? (Go back to previous 10?)")
+    
+    return "\n".join(output)
+from enum import Enum
 
+class PaginationSentiment(Enum):
+    POSITIVE = "positive"
+    NEGATIVE = "negative"
+
+@tool("handle_user_pagination_response")
+def handle_user_pagination_response(user_sentiment: PaginationSentiment, current_page: int, total_blanes: int) -> str:
+    """
+    Handle user response for pagination navigation.
+    
+    Args:
+        user_sentiment: PaginationSentiment.POSITIVE or PaginationSentiment.NEGATIVE
+        current_page: Current page number from session
+        total_blanes: Total number of blanes
+    
+    Returns:
+        Next page of blanes if positive, or appropriate message if negative
+    """
+    per_page = 10
+    total_pages = (total_blanes + per_page - 1) // per_page  # Ceiling division
+    
+    if user_sentiment == PaginationSentiment.POSITIVE:
+        if current_page < total_pages:
+            next_page = current_page + 1
+            # Update session with new page number
+            # set_session('current_page', next_page)
+            return blanes_list(next_page)
+        else:
+            return "❌ Vous êtes déjà sur la dernière page. (You're already on the last page.)"
+    
+    elif user_sentiment == PaginationSentiment.NEGATIVE:
+        return "👍 D'accord! Y a-t-il autre chose que je puisse vous aider? (Alright! Is there anything else I can help you with?)"
+    
+    else:
+        return "❓ Je n'ai pas compris votre réponse. Dites 'oui' pour voir plus ou 'non' pour arrêter. (I didn't understand your response. Say 'yes' to see more or 'no' to stop.)"
 
 @tool("get_available_time_slots")
 def get_available_time_slots(blane_id: int, date: str) -> str:
