@@ -192,58 +192,105 @@ def authenticate_email(session_id: str, client_email: str) -> str:
 #         output.append(f"💡 Retourner aux 10 précédents? (Go back to previous 10?)")
     
 #     return "\n".join(output)
+from enum import Enum
+
+class PaginationSentiment(Enum):
+    POSITIVE = "positive"
+    NEGATIVE = "negative"
+
 @tool("list_blanes")
-def blanes_list(page_num: int = 1) -> str:
+def blanes_list(start: int = 1, offset: int = 10) -> str:
     """
-    Lists active Blanes with pagination.
-    Shows 10 blanes per page.
+    Lists active Blanes with start position and offset without knowing district and sub-district information. Always show total blanes in output.
     
     Args:
-        page_num: Page number to display from session (default: 1)
+        start: Starting position (default: 1, minimum: 1)
+        offset: Number of items to show (default: 10, maximum: 25)
     
-    Returns a readable list with pagination info.
+    Returns a readable list with range info.
     """
-    # Since page_num comes from session, no need for global variables
+    # Validate parameters
+    
+    if start < 1:
+        start = 1
+    if offset < 1:
+        offset = 10
+    if offset > 25:
+        offset = 25
     
     token = get_token()
     if not token:
         return "❌ Failed to retrieve token. Please try again later."
     
-    # Fetch only the specific page we need
+    # Calculate which API page we need and how many items to fetch
+    # Since API uses 1-based pagination with per_page
+    api_page = ((start - 1) // 10) + 1  # Which API page contains our start position
+    items_needed = offset
+    
+    # We might need multiple API pages if offset spans across pages
     url = f"{BASEURLBACK}/blanes"
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json"
     }
 
+    all_fetched_blanes = []
+    total_blanes = 0
+    
     try:
-        params = {
-            "status": "active",
-            "sort_by": "created_at",
-            "sort_order": "desc",
-            "per_page": 10,
-            "page": page_num
-        }
+        # Fetch enough pages to get our desired range
+        current_api_page = api_page
+        items_collected = 0
         
-        response = httpx.get(url, headers=headers, params=params)
-        response.raise_for_status()
-        data = response.json()
+        while items_collected < items_needed:
+            params = {
+                "status": "active",
+                "sort_by": "created_at",
+                "sort_order": "desc",
+                "per_page": 10,
+                "page": current_api_page
+            }
+            
+            response = httpx.get(url, headers=headers, params=params)
+            response.raise_for_status()
+            data = response.json()
+            
+            page_blanes = data.get('data', [])
+            meta = data.get('meta', {})
+            total_blanes = meta.get('total', 0)
+
+            if start+offset > total_blanes:
+                offset = total_blanes-start + 1
+            
+            if not page_blanes:
+                break
+            
+            all_fetched_blanes.extend(page_blanes)
+            items_collected += len(page_blanes)
+            current_api_page += 1
+            
+            # Stop if we've reached the end of available data
+            if len(all_fetched_blanes) >= total_blanes:
+                break
         
-        page_blanes = data.get('data', [])
-        meta = data.get('meta', {})
-        total_blanes = meta.get('total', 0)
-        per_page = meta.get('per_page', 10)
-        current_page = meta.get('current_page', page_num)
+        # Calculate the actual start position in our fetched data
+        start_in_fetched = (start - 1) % 10 if api_page == ((start - 1) // 10) + 1 else 0
         
-        if not page_blanes:
-            if page_num == 1:
-                return "No blanes found."
-            else:
-                total_pages = (total_blanes + per_page - 1) // per_page
-                return f"❌ Invalid page number. Please choose between 1 and {total_pages}."
+        # Get the exact slice we need
+        if start > total_blanes:
+            return f"❌ Start position {start} is beyond available blanes. Total blanes: {total_blanes}"
         
-        total_pages = (total_blanes + per_page - 1) // per_page
+        # Adjust for the actual position in the complete dataset
+        actual_start_index = start - ((api_page - 1) * 10) - 1
+        if actual_start_index < 0:
+            actual_start_index = 0
+            
+        end_index = min(actual_start_index + offset, len(all_fetched_blanes))
+        selected_blanes = all_fetched_blanes[actual_start_index:end_index]
         
+        if not selected_blanes:
+            return f"❌ No blanes found in range {start} to {start + offset - 1}"
+            
     except httpx.HTTPStatusError as e:
         return f"❌ HTTP Error {e.response.status_code}: {e.response.text}"
     except Exception as e:
@@ -252,57 +299,49 @@ def blanes_list(page_num: int = 1) -> str:
     # Build output
     output = []
     
-    # Add header with pagination info
-    output.append(f"📋 Blanes List (Page {current_page} of {total_pages})")
+    # Calculate actual end position
+    actual_end = min(start + len(selected_blanes) - 1, total_blanes)
     
-    # Calculate display range
-    start_display = (current_page - 1) * per_page + 1
-    end_display = min(start_display + len(page_blanes) - 1, total_blanes)
-    output.append(f"Showing {start_display}-{end_display} of {total_blanes} total blanes")
+    # Add header with range info
+    output.append(f"📋 Blanes List (Items {start}-{actual_end} of {total_blanes} total)")
     output.append("")
     
-    # Add blanes for this page
-    for i, blane in enumerate(page_blanes, start=start_display):
+    # Add blanes with their actual position numbers
+    for i, blane in enumerate(selected_blanes, start=start):
         output.append(f"{i}. {blane['name']} — MAD. {blane['price_current']} (ID: {blane['id']}) - BlaneType: {blane['type']} - TimeType: {blane['type_time']}")
     
     # Add navigation hints
     output.append("")
-    if current_page < total_pages:
-        output.append(f"💡 Voulez-vous voir les 10 suivants? (Do you want to see the next 10?)")
-    if current_page > 1:
-        output.append(f"💡 Retourner aux 10 précédents? (Go back to previous 10?)")
+    if actual_end < total_blanes:
+        next_start = actual_end + 1
+        output.append(f"💡 Voulez-vous voir les suivants? (Items {next_start}-{min(next_start + offset - 1, total_blanes)})")
     
     return "\n".join(output)
-from enum import Enum
-
-class PaginationSentiment(Enum):
-    POSITIVE = "positive"
-    NEGATIVE = "negative"
 
 @tool("handle_user_pagination_response")
-def handle_user_pagination_response(user_sentiment: PaginationSentiment, current_page: int, total_blanes: int) -> str:
+def handle_user_pagination_response(user_sentiment: PaginationSentiment, current_start: int, current_offset: int, total_blanes: int) -> str:
     """
     Handle user response for pagination navigation.
     
     Args:
         user_sentiment: PaginationSentiment.POSITIVE or PaginationSentiment.NEGATIVE
-        current_page: Current page number from session
+        current_start: Current start position from session
+        current_offset: Current offset from session
         total_blanes: Total number of blanes
     
     Returns:
-        Next page of blanes if positive, or appropriate message if negative
+        Next set of blanes if positive, or appropriate message if negative
     """
-    per_page = 10
-    total_pages = (total_blanes + per_page - 1) // per_page  # Ceiling division
-    
     if user_sentiment == PaginationSentiment.POSITIVE:
-        if current_page < total_pages:
-            next_page = current_page + 1
-            # Update session with new page number
-            # set_session('current_page', next_page)
-            return blanes_list(next_page)
+        # Calculate next start position
+        next_start = current_start + current_offset
+        
+        if next_start <= total_blanes:
+            # Update session with new start position
+            # set_session('current_start', next_start)
+            return blanes_list(next_start, current_offset)
         else:
-            return "❌ Vous êtes déjà sur la dernière page. (You're already on the last page.)"
+            return "❌ Vous êtes déjà à la fin de la liste. (You're already at the end of the list.)"
     
     elif user_sentiment == PaginationSentiment.NEGATIVE:
         return "👍 D'accord! Y a-t-il autre chose que je puisse vous aider? (Alright! Is there anything else I can help you with?)"
