@@ -13,7 +13,9 @@ from tools.blanes import (
     blanes_list,
     get_blane_info,
     prepare_reservation_prompt,
-    search_blanes_by_location_and_category,
+    list_blanes_by_location_and_category,
+    find_blanes_by_name_or_link,
+    handle_filtered_pagination_response,
     authenticate_email,
     get_available_time_slots,
     get_available_periods,
@@ -132,12 +134,12 @@ Date : `{date}`
 
 ➡️ Alors :
 1. Je demande : “🧭 Peux-tu me dire ton *district* et *sous-district*, s’il te plaît ?”
-2. Une fois les deux fournis, j’appelle `search_blanes_by_location_and_category(district, sub_district, category, city, start, offset)` avec correction orthographique via `district_map`.
+2. Une fois les deux fournis, j’appelle `list_blanes_by_location_and_category(district, sub_district, category, city, start, offset)` avec correction orthographique via `district_map`.
 
 ---
 
 📍 *Carte Officielle des Districts de Casablanca et Environs*  
-Utilise les noms officiels suivants de district et sous-district pour comprendre les entrées de l’utilisateur et corriger les fautes dans `search_blanes_by_location_and_category` :
+Utilise les noms officiels suivants de district et sous-district pour comprendre les entrées de l’utilisateur et corriger les fautes dans `list_blanes_by_location_and_category` :
 {district_map}
 
 🗨️ *Notre Conversation Jusqu’ici* :  
@@ -195,13 +197,16 @@ Date: `{date}`
 
 ➡️ Then:
 1. I ask: “🧭 Can you tell me your *district* and *sub-district*, please?”  
-2. Once both are provided, I call `search_blanes_by_location_and_category(district, sub_district, category, city, start, offset)` with spelling correction via `district_map`.
+2. Once both are provided, I call `list_blanes_by_location_and_category(district, sub_district, category, city, start, offset)` with spelling correction via `district_map`.
 
 ---
 
 📍 *Official District Map of Casablanca and Surroundings*  
-Use the following official district and sub-district names to understand the user’s input and correct spelling errors in `search_blanes_by_location_and_category`:
+Use the following official district and sub-district names to understand the user’s input and correct spelling errors in `list_blanes_by_location_and_category`:
 {district_map}
+
+- If you have to search blanes without any constraints, use list_blanes tool.
+- If you have to search blanes with constraints, use list_blanes_by_location_and_category tool.
 
 Entry Flow:
 0) Ask: “Hey! Do you already have a blane to book, or should I suggest some?” Buttons: [I have one] [Suggest].
@@ -244,7 +249,9 @@ class BookingToolAgent:
             blanes_list,
             get_blane_info,
             prepare_reservation_prompt,
-            search_blanes_by_location_and_category,
+            list_blanes_by_location_and_category,
+            find_blanes_by_name_or_link,
+            handle_filtered_pagination_response,
             authenticate_email,
             get_available_time_slots,
             get_available_periods,

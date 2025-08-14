@@ -1,4 +1,6 @@
 from langchain.tools import tool
+from urllib.parse import urlparse, unquote
+from fuzzywuzzy import fuzz
 import httpx
 import requests
 from datetime import datetime
@@ -95,7 +97,8 @@ class PaginationSentiment(Enum):
 @tool("list_blanes")
 def blanes_list(start: int = 1, offset: int = 10) -> str:
     """
-    Lists active Blanes with start position and offset without knowing district and sub-district information. Always show total blanes in output.
+    Lists all Blanes without any constraints.
+    If you have any constraints like category, city, district, sub-district, etc. you can use the tool list_blanes_by_location_and_category to get the blanes.
     
     Args:
         start: Starting position (default: 1, minimum: 1)
@@ -1064,8 +1067,8 @@ def _matches_category(name: str, description: str, category: str) -> bool:
     return any(k in text for k in keywords)
 
 
-@tool("Search_blanes_by_location_and_category")
-def search_blanes_by_location_and_category(
+@tool("list_blanes_by_location_and_category")
+def list_blanes_by_location_and_category(
     district: str = "",
     sub_district: str = "",
     category: str = "",
@@ -1154,17 +1157,21 @@ def search_blanes_by_location_and_category(
     if total_matches == 0:
         return "❌ No blanes found for the given filters."
 
-    # Pagination
-    if start < 1: start = 1
-    if offset < 1: offset = 10
+    # Pagination normalization and bounds
+    if start < 1:
+        start = 1
+    if offset < 1:
+        offset = 10
     end = min(start - 1 + offset, total_matches)
     if start > total_matches:
         return f"❌ Start position {start} is beyond available results. Total: {total_matches}"
 
     slice_items = ordered[start - 1:end]
 
-    # Output
+    # Output with header similar to blanes_list
     lines = ["Here are some options:"]
+    lines.append(f"📋 Blanes List (Items {start}-{end} of {total_matches} total)")
+    lines.append("")
     for idx, blane in enumerate(slice_items, start=start):
         name = blane.get("name", "Unknown")
         price = blane.get("price_current")
@@ -1181,6 +1188,155 @@ def search_blanes_by_location_and_category(
 
     return "\n".join(lines)
 
+
+@tool("handle_filtered_pagination_response")
+def handle_filtered_pagination_response(
+    user_sentiment: PaginationSentiment,
+    district: str = "",
+    sub_district: str = "",
+    category: str = "",
+    city: str = "",
+    current_start: int = 1,
+    current_offset: int = 10
+) -> str:
+    """
+    Handle user response for pagination navigation on filtered blane lists.
+
+    Args:
+        user_sentiment: PaginationSentiment.POSITIVE or PaginationSentiment.NEGATIVE
+        district, sub_district, category, city: Same filters used for the list
+        current_start: Current start position from previous call
+        current_offset: Current offset from previous call
+
+    Returns:
+        Next set of filtered blanes if positive, or appropriate message if negative
+    """
+    if user_sentiment == PaginationSentiment.POSITIVE:
+        next_start = max(1, int(current_start)) + max(1, int(current_offset))
+        return list_blanes_by_location_and_category(
+            district=district,
+            sub_district=sub_district,
+            category=category,
+            city=city,
+            start=next_start,
+            offset=current_offset
+        )
+    elif user_sentiment == PaginationSentiment.NEGATIVE:
+        return "👍 Okay! Would you like to change filters or see something else?"
+    else:
+        return "❓ I didn't understand. Say 'yes' to see more or 'no' to stop."
+
+
+# ---------------------------------------------
+# New tool: find blanes by user-provided name or link
+# ---------------------------------------------
+@tool("find_blanes_by_name_or_link")
+def find_blanes_by_name_or_link(query: str, limit: int = 10, score_threshold: int = 60) -> str:
+    """
+    Find blanes when the user provides a blane name or a link.
+    - If a link is provided, extracts the last path segment as the blane name (decodes hyphens and %20).
+    - Uses fuzzy matching to search across all active blanes by name/slug.
+    - Returns matches formatted as: "{idx} - {name} — {price} Dhs (blane_id: {id})".
+
+    Args:
+        query: Blane name or link.
+        limit: Maximum number of results to return (default 10).
+        score_threshold: Minimum fuzzy match score to include (default 60).
+    """
+    # Normalize user query (handle link vs. plain name)
+    def _extract_name_from_query(q: str) -> str:
+        q = (q or "").strip()
+        try:
+            if q.startswith("http://") or q.startswith("https://") or q.startswith("www."):
+                parsed = urlparse(q if q.startswith("http") else f"https://{q}")
+                last = [seg for seg in parsed.path.split("/") if seg][-1:] or [""]
+                candidate = unquote(last[0])
+                # Convert common slug separators to spaces
+                candidate = candidate.replace("-", " ").replace("_", " ").strip()
+                return candidate if candidate else q
+            return q
+        except Exception:
+            return q
+
+    user_text = _extract_name_from_query(query)
+    if not user_text:
+        return "❌ Please provide a valid blane name or link."
+
+    token = get_token()
+    if not token:
+        return "❌ Failed to retrieve token. Please try again later."
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+
+    # Fetch all active blanes with pagination
+    collected = []
+    page = 1
+    try:
+        while True:
+            params = {
+                "status": "active",
+                "sort_by": "created_at",
+                "sort_order": "desc",
+                "per_page": 100,
+                "page": page
+            }
+            resp = httpx.get(f"{BASEURLBACK}/blanes", headers=headers, params=params)
+            resp.raise_for_status()
+            payload = resp.json()
+            data = payload.get("data", [])
+            meta = payload.get("meta", {})
+            if not data:
+                break
+            collected.extend(data)
+            total = meta.get("total")
+            last_page = meta.get("last_page")
+            if last_page and page >= last_page:
+                break
+            if total and len(collected) >= int(total):
+                break
+            page += 1
+    except httpx.HTTPStatusError as e:
+        return f"❌ HTTP Error {e.response.status_code}: {e.response.text}"
+    except Exception as e:
+        return f"❌ Error fetching blanes: {str(e)}"
+
+    if not collected:
+        return "❌ No blanes found."
+
+    # Fuzzy score per blane (compare against name and slug)
+    query_norm = user_text.lower()
+    scored = []
+    for blane in collected:
+        name = (blane.get("name") or "").lower()
+        slug = (blane.get("slug") or "").lower().replace("-", " ").replace("_", " ")
+        s1 = fuzz.WRatio(query_norm, name) if name else 0
+        s2 = fuzz.partial_ratio(query_norm, name) if name else 0
+        s3 = fuzz.WRatio(query_norm, slug) if slug else 0
+        s4 = fuzz.partial_ratio(query_norm, slug) if slug else 0
+        score = max(s1, s2, s3, s4)
+        if score >= score_threshold:
+            scored.append((score, blane))
+
+    if not scored:
+        return f"❌ No similar blanes found for '{user_text}'."
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    top = [b for _, b in scored[: max(1, int(limit))]]
+
+    lines = []
+    for idx, blane in enumerate(top, start=1):
+        name = blane.get("name", "Unknown")
+        price = blane.get("price_current")
+        blane_id = blane.get("id")
+        if price:
+            lines.append(f"{idx} - {name} — {price} Dhs (blane_id: {blane_id})")
+        else:
+            lines.append(f"{idx} - {name} (blane_id: {blane_id})")
+
+    return "\n".join(lines)
 
 # @tool("Search_blanes_by_location")
 # def search_blanes_by_location(district: str = "", sub_district: str = "", category: str = "", city: str = "", start: int = 1, offset: int = 10) -> str:
