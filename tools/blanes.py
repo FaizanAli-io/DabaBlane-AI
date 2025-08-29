@@ -639,7 +639,7 @@ def create_reservation(
     comments: str = "N/A"
 ) -> str:
     """
-    Handles reservation or order creation. Must run `before_create_reservation` first.
+    Handles reservation or order creation.
     """
     from datetime import datetime, timedelta
     import httpx
