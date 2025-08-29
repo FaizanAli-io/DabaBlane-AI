@@ -5,26 +5,24 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain.agents import AgentExecutor, create_tool_calling_agent
 from app.database import SessionLocal
 from app.chatbot.models import Session, Message
-# from app.chatbot.models import Session, Message, Client
 
 from tools.blanes import (
     list_reservations,
+    list_districts_and_subdistricts,
+    list_categories,
     create_reservation,
-    blanes_list,
+    preview_reservation,
+    # blanes_list,
     get_blane_info,
     prepare_reservation_prompt,
-    search_blanes_by_location,
+    list_blanes_by_location_and_category,
+    find_blanes_by_name_or_link,
+    # handle_filtered_pagination_response,
     authenticate_email,
     get_available_time_slots,
     get_available_periods,
     handle_user_pagination_response
 )
-# from tools.booking_tools import (
-#     is_authenticated,
-#     authenticate_email,
-#     check_reservation_info,
-#     create_reservation_for_client,
-# )
 from tools.misc_tools import sum_tool
 
 load_dotenv()
@@ -138,12 +136,12 @@ Date : `{date}`
 
 ➡️ Alors :
 1. Je demande : “🧭 Peux-tu me dire ton *district* et *sous-district*, s’il te plaît ?”
-2. Une fois les deux fournis, j’appelle `search_blanes_by_location(district, sub_district)` avec correction orthographique via `district_map`.
+2. Une fois les deux fournis, j’appelle `list_blanes_by_location_and_category(district, sub_district, category, city, start, offset)` avec correction orthographique via `district_map`.
 
 ---
 
 📍 *Carte Officielle des Districts de Casablanca et Environs*  
-Utilise les noms officiels suivants de district et sous-district pour comprendre les entrées de l’utilisateur et corriger les fautes dans `search_blanes_by_location` :
+Utilise les noms officiels suivants de district et sous-district pour comprendre les entrées de l’utilisateur et corriger les fautes dans `list_blanes_by_location_and_category` :
 {district_map}
 
 🗨️ *Notre Conversation Jusqu’ici* :  
@@ -177,13 +175,15 @@ Date: `{date}`
 
 🧰 *What I Can Do for You*:
 
-- ✉️ *Authenticate you* with your email — no email, no data.  
-- 📅 *Check your booking details* once verified.  
-- 🛎️ *Make new reservations* for you like a pro.  
-- ➕ Always run `before_create_reservation(blane_id)` before calling `create_reservations(blane_id)`, even if the user directly asks for a booking.  
-- 📍 *Search for blanes in your area* — just tell me your district and sub-district (otherwise, I’ll ask).  
-- 💵 *All amounts are shown in Moroccan dirhams (MAD)*.  
-- 🔒 *Log you out*, refresh your token, or help with secure actions.
+- ✉️ Authenticate with email; no email, no any other functionality.  
+- 📅 Check booking details once verified.  
+- 🛎️ Make new reservations. Always call `before_create_reservation(blane_id)` before previewing/creating. Then call `preview_reservation(...)` to show recap and price, and only on user confirmation call `create_reservation(...)`.  
+- 📍 Suggest blanes: ask category → city → district; support sub-district prioritization and fallback to district options.  
+- 📄 Results should list title + price if available (omit if unknown), 10 at a time, then ask “Want more?” with buttons [Show 10 more] [See details].  
+- 🔎 On “See details”, show details for the selected blane and ask: “Do you want me to book this for you, or see other blanes?” with buttons [Book this] [See others].  
+- 🧾 Only enter booking after the user saw details.  
+- 💵 Include delivery cost in physical orders; compute partial/online/cash and trigger payment link internally when applicable.  
+- 🔒 Log out, refresh token, or help with secure tasks.
 
 🔑 *How I Handle Your Data*:
 
@@ -199,17 +199,30 @@ Date: `{date}`
 
 ➡️ Then:
 1. I ask: “🧭 Can you tell me your *district* and *sub-district*, please?”  
-2. Once both are provided, I call `search_blanes_by_location(district, sub_district)` with spelling correction via `district_map`.
+2. Once both are provided, I call `list_blanes_by_location_and_category(district, sub_district, category, city, start, offset)` with spelling correction via `district_map`.
 
 ---
 
 📍 *Official District Map of Casablanca and Surroundings*  
-Use the following official district and sub-district names to understand the user’s input and correct spelling errors in `search_blanes_by_location`:
+Use the following official district and sub-district names to understand the user’s input and correct spelling errors in `list_blanes_by_location_and_category`:
 {district_map}
 
-Important Note:
-Dont forcfully ask user about district and sub-dsitrict information. If user wish to list blanes according to his district then only ask
+- If you have to search blanes without any constraints, use list_blanes tool.
+- If you have to search blanes with constraints, use list_blanes_by_location_and_category tool.
 
+Entry Flow:
+0) Ask for user's email if not authenticated. If email is `"unauthenticated"`, run `authenticate_email` tool.
+- If email is authenticated, proceed with the following:
+0) Ask: “Hey! Do you already have a blane to book, or should I suggest some?” Buttons: [I have one] [Suggest].
+   - If “I have one”: Ask for blane name or link; fetch details and proceed to booking flow (run `before_create_reservation` first).
+1) If “Suggest”: if they want to specify -> category, city, district or sub district
+   - If they want to specify category -> show categories using `list_categories` tool
+   - If they want to specify city -> ask for city
+   - If they want to specify district or sub district -> show districts and sub districts using `list_districts_and_subdistricts` tool
+3) **If user has a preference in category, city, district or sub-district, use `list_blanes_by_location_and_category` tool to list blanes according to their prefernce**
+4) If user selects a blane, show details using `get_blane_info` tool. If they want to book, run `get_blane_info` for blane info and give the info to user and `before_create_reservation(blane_id)` first to know what data is needed from the user to create a reservation.
+5) If users asks to see more blanes, go back to step 1 with the same searching criteria they asked for(category, district or sub district, city).
+6) Confirm the reservation by showing the user dynamic reservation details using `preview_reservation` tool. Ask if they want to book it, edit it, or see more options. If they want to book, call `create_reservation` tool.
 
 🗨️ *Our Conversation So Far*:  
 {chat_history}
@@ -233,23 +246,21 @@ def get_chat_history(session_id: str):
         return [(msg.sender, msg.content) for msg in reversed(history)]
 
 
-# def get_chat_history(session_id: str):
-#     with SessionLocal() as db:
-#         history = db.query(Message).filter(Message.session_id == session_id).order_by(Message.timestamp).all()
-#         return [(msg.sender, msg.content) for msg in history]
-
-
-
 class BookingToolAgent:
     def __init__(self):
         self.tools = [
             sum_tool,
             list_reservations,
+            list_districts_and_subdistricts,
+            list_categories,
             create_reservation,
-            blanes_list,
+            preview_reservation,
+            # blanes_list,
             get_blane_info,
             prepare_reservation_prompt,
-            search_blanes_by_location,
+            list_blanes_by_location_and_category,
+            find_blanes_by_name_or_link,
+            # handle_filtered_pagination_response,
             authenticate_email,
             get_available_time_slots,
             get_available_periods,

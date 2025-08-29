@@ -1,10 +1,14 @@
 from langchain.tools import tool
+from urllib.parse import urlparse, unquote
+from fuzzywuzzy import fuzz
 import httpx
 import requests
 from datetime import datetime
 from app.chatbot.models import Session
 from app.database import SessionLocal
+from enum import Enum
 BASEURLFRONT = "https://api.dabablane.com/api/front/v1"
+BASEURL = "https://api.dabablane.com/api"
 BASEURLBACK = "https://api.dabablane.com/api/back/v1"
 
 def get_token():
@@ -68,12 +72,6 @@ def authenticate_email(session_id: str, client_email: str) -> str:
     Authenticates a user by email and associates it with a session.
     """
     with SessionLocal() as db:
-        # Check if client exists
-        # client = db.query(Client).filter(Client.email == client_email).first()
-        # if not client:
-        #     client = Client(email=client_email)
-        #     db.add(client)
-        #     db.commit()
 
         # Fetch the session
         session = db.query(Session).filter(Session.id == session_id).first()
@@ -86,268 +84,170 @@ def authenticate_email(session_id: str, client_email: str) -> str:
 
     return f"Authenticated {client_email} for session {session_id}"
 
+class PaginationSentiment(Enum):
+    POSITIVE = "positive"
+    NEGATIVE = "negative"
 
 # @tool("list_blanes")
-# def blanes_list(page_num: int = 1) -> str:
+# def blanes_list(start: int = 1, offset: int = 10) -> str:
 #     """
-#     Lists active Blanes with pagination.
-#     Shows 10 blanes per page.
+#     Lists all Blanes without any constraints.
+#     If you have any constraints like category(like restaurant, spa, activity, etc), city, district, sub-district, etc. you can use the tool list_blanes_by_location_and_category to get the blanes.
     
 #     Args:
-#         page_num: Page number to display from session (default: 1)
+#         start: Starting position (default: 1, minimum: 1)
+#         offset: Number of items to show (default: 10, maximum: 25)
     
-#     Returns a readable list with pagination info.
+#     Returns a readable list with range info.
 #     """
-#     # Since page_num comes from session, no need for global variables
+#     # Validate parameters
+    
+#     if start < 1:
+#         start = 1
+#     if offset < 1:
+#         offset = 10
+#     if offset > 25:
+#         offset = 25
     
 #     token = get_token()
 #     if not token:
 #         return "❌ Failed to retrieve token. Please try again later."
     
-#     # Get cached blanes from session (you'll need to implement session storage)
-#     # cached_blanes = get_from_session('cached_blanes') or []
+#     # Calculate which API page we need and how many items to fetch
+#     # Since API uses 1-based pagination with per_page
+#     api_page = ((start - 1) // 10) + 1  # Which API page contains our start position
+#     items_needed = offset
     
-#     # For now, we'll always fetch fresh data - you can optimize this later with proper session caching
+#     # We might need multiple API pages if offset spans across pages
 #     url = f"{BASEURLBACK}/blanes"
 #     headers = {
 #         "Authorization": f"Bearer {token}",
 #         "Content-Type": "application/json"
 #     }
 
-#     all_blanes = []
-#     api_page = 1
+#     all_fetched_blanes = []
+#     total_blanes = 0
     
 #     try:
-#         while True:
+#         # Fetch enough pages to get our desired range
+#         current_api_page = api_page
+#         items_collected = 0
+        
+#         while items_collected < items_needed:
 #             params = {
 #                 "status": "active",
 #                 "sort_by": "created_at",
 #                 "sort_order": "desc",
 #                 "per_page": 10,
-#                 "page": api_page
+#                 "page": current_api_page
 #             }
             
 #             response = httpx.get(url, headers=headers, params=params)
 #             response.raise_for_status()
 #             data = response.json()
             
-#             blanes = data.get('data', [])
-            
-#             if not blanes:
-#                 break
-                
-#             all_blanes.extend(blanes)
-            
-#             # Check if we've got all items
-#             total_blanes = data.get('meta', {}).get('total', 0)
-            
-#             if len(all_blanes) >= total_blanes:
-#                 break
-                
-#             api_page += 1
+#             page_blanes = data.get('data', [])
+#             meta = data.get('meta', {})
+#             total_blanes = meta.get('total', 0)
 
-#         # Store in session/cache for pagination
-#         # set_session('cached_blanes', all_blanes)
-#         cached_blanes = all_blanes
+#             if start+offset > total_blanes:
+#                 offset = total_blanes-start + 1
+            
+#             if not page_blanes:
+#                 break
+            
+#             all_fetched_blanes.extend(page_blanes)
+#             items_collected += len(page_blanes)
+#             current_api_page += 1
+            
+#             # Stop if we've reached the end of available data
+#             if len(all_fetched_blanes) >= total_blanes:
+#                 break
         
+#         # Calculate the actual start position in our fetched data
+#         start_in_fetched = (start - 1) % 10 if api_page == ((start - 1) // 10) + 1 else 0
+        
+#         # Get the exact slice we need
+#         if start > total_blanes:
+#             return f"❌ Start position {start} is beyond available blanes. Total blanes: {total_blanes}"
+        
+#         # Adjust for the actual position in the complete dataset
+#         actual_start_index = start - ((api_page - 1) * 10) - 1
+#         if actual_start_index < 0:
+#             actual_start_index = 0
+            
+#         end_index = min(actual_start_index + offset, len(all_fetched_blanes))
+#         selected_blanes = all_fetched_blanes[actual_start_index:end_index]
+        
+#         if not selected_blanes:
+#             return f"❌ No blanes found in range {start} to {start + offset - 1}"
+            
 #     except httpx.HTTPStatusError as e:
 #         return f"❌ HTTP Error {e.response.status_code}: {e.response.text}"
 #     except Exception as e:
 #         return f"❌ Error fetching blanes: {str(e)}"
-
-#     if not cached_blanes:
-#         return "No blanes found."
-
-#     # Calculate pagination
-#     total_blanes = len(cached_blanes)
-#     per_page = 10
-#     total_pages = (total_blanes + per_page - 1) // per_page  # Ceiling division
-    
-#     # Validate page number
-#     if page_num < 1 or page_num > total_pages:
-#         return f"❌ Invalid page number. Please choose between 1 and {total_pages}."
-    
-#     # Get blanes for current page
-#     start_index = (page_num - 1) * per_page
-#     end_index = min(start_index + per_page, total_blanes)
-#     page_blanes = cached_blanes[start_index:end_index]
     
 #     # Build output
-#     output = []
+#     output = ["Here are some options:"]
     
-#     # Add header with pagination info
-#     output.append(f"📋 Blanes List (Page {page_num} of {total_pages})")
-#     output.append(f"Showing {start_index + 1}-{end_index} of {total_blanes} total blanes")
+#     # Calculate actual end position
+#     actual_end = min(start + len(selected_blanes) - 1, total_blanes)
+    
+#     # Add header with range info
+#     output.append(f"📋 Blanes List (Items {start}-{actual_end} of {total_blanes} total)")
 #     output.append("")
     
-#     # Add blanes for this page
-#     for i, blane in enumerate(page_blanes, start=start_index + 1):
-#         output.append(f"{i}. {blane['name']} — MAD. {blane['price_current']} (ID: {blane['id']}) - BlaneType: {blane['type']} - TimeType: {blane['type_time']}")
+#     # Add blanes with their actual position numbers (title + price if available)
+#     for i, blane in enumerate(selected_blanes, start=start):
+#         name = blane.get('name', 'Unknown')
+#         price = blane.get('price_current')
+#         id = blane.get('id')
+#         if price:
+#             output.append(f"{i}. {name} — {price} Dhs (blane_id: {id})")
+#         else:
+#             output.append(f"{i}. {name} (blane_id: {id})")
+#         #output.append(f"{i}. {blane['name']} — MAD. {blane['price_current']} (ID: {blane['id']}) - BlaneType: {blane['type']} - TimeType: {blane['type_time']}")
     
 #     # Add navigation hints
 #     output.append("")
-#     if page_num < total_pages:
-#         output.append(f"💡 Voulez-vous voir les 10 suivants? (Do you want to see the next 10?)")
-#     if page_num > 1:
-#         output.append(f"💡 Retourner aux 10 précédents? (Go back to previous 10?)")
-    
+#     if actual_end < total_blanes:
+#         next_start = actual_end + 1
+#         # output.append(f"💡 Voulez-vous voir les suivants? (Items {next_start}-{min(next_start + offset - 1, total_blanes)})")
+#         output.append(f"\nWant more?\nButtons: [Show 10 more] [See details]")
+#     else:
+#         output.append("\nThat’s all in this district. Want me to suggest blanes in another district?")
 #     return "\n".join(output)
-from enum import Enum
 
-class PaginationSentiment(Enum):
-    POSITIVE = "positive"
-    NEGATIVE = "negative"
-
-@tool("list_blanes")
-def blanes_list(start: int = 1, offset: int = 10) -> str:
-    """
-    Lists active Blanes with start position and offset without knowing district and sub-district information. Always show total blanes in output.
+# @tool("handle_user_pagination_response")
+# def handle_user_pagination_response(user_sentiment: PaginationSentiment, current_start: int, current_offset: int, total_blanes: int) -> str:
+#     """
+#     Handle user response for pagination navigation.
     
-    Args:
-        start: Starting position (default: 1, minimum: 1)
-        offset: Number of items to show (default: 10, maximum: 25)
+#     Args:
+#         user_sentiment: PaginationSentiment.POSITIVE or PaginationSentiment.NEGATIVE
+#         current_start: Current start position from session
+#         current_offset: Current offset from session
+#         total_blanes: Total number of blanes
     
-    Returns a readable list with range info.
-    """
-    # Validate parameters
-    
-    if start < 1:
-        start = 1
-    if offset < 1:
-        offset = 10
-    if offset > 25:
-        offset = 25
-    
-    token = get_token()
-    if not token:
-        return "❌ Failed to retrieve token. Please try again later."
-    
-    # Calculate which API page we need and how many items to fetch
-    # Since API uses 1-based pagination with per_page
-    api_page = ((start - 1) // 10) + 1  # Which API page contains our start position
-    items_needed = offset
-    
-    # We might need multiple API pages if offset spans across pages
-    url = f"{BASEURLBACK}/blanes"
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json"
-    }
-
-    all_fetched_blanes = []
-    total_blanes = 0
-    
-    try:
-        # Fetch enough pages to get our desired range
-        current_api_page = api_page
-        items_collected = 0
+#     Returns:
+#         Next set of blanes if positive, or appropriate message if negative
+#     """
+#     if user_sentiment == PaginationSentiment.POSITIVE:
+#         # Calculate next start position
+#         next_start = current_start + current_offset
         
-        while items_collected < items_needed:
-            params = {
-                "status": "active",
-                "sort_by": "created_at",
-                "sort_order": "desc",
-                "per_page": 10,
-                "page": current_api_page
-            }
-            
-            response = httpx.get(url, headers=headers, params=params)
-            response.raise_for_status()
-            data = response.json()
-            
-            page_blanes = data.get('data', [])
-            meta = data.get('meta', {})
-            total_blanes = meta.get('total', 0)
-
-            if start+offset > total_blanes:
-                offset = total_blanes-start + 1
-            
-            if not page_blanes:
-                break
-            
-            all_fetched_blanes.extend(page_blanes)
-            items_collected += len(page_blanes)
-            current_api_page += 1
-            
-            # Stop if we've reached the end of available data
-            if len(all_fetched_blanes) >= total_blanes:
-                break
-        
-        # Calculate the actual start position in our fetched data
-        start_in_fetched = (start - 1) % 10 if api_page == ((start - 1) // 10) + 1 else 0
-        
-        # Get the exact slice we need
-        if start > total_blanes:
-            return f"❌ Start position {start} is beyond available blanes. Total blanes: {total_blanes}"
-        
-        # Adjust for the actual position in the complete dataset
-        actual_start_index = start - ((api_page - 1) * 10) - 1
-        if actual_start_index < 0:
-            actual_start_index = 0
-            
-        end_index = min(actual_start_index + offset, len(all_fetched_blanes))
-        selected_blanes = all_fetched_blanes[actual_start_index:end_index]
-        
-        if not selected_blanes:
-            return f"❌ No blanes found in range {start} to {start + offset - 1}"
-            
-    except httpx.HTTPStatusError as e:
-        return f"❌ HTTP Error {e.response.status_code}: {e.response.text}"
-    except Exception as e:
-        return f"❌ Error fetching blanes: {str(e)}"
+#         if next_start <= total_blanes:
+#             # Update session with new start position
+#             # set_session('current_start', next_start)
+#             return blanes_list(next_start, current_offset)
+#         else:
+#             return "❌ Vous êtes déjà à la fin de la liste. (You're already at the end of the list.)"
     
-    # Build output
-    output = []
+#     elif user_sentiment == PaginationSentiment.NEGATIVE:
+#         return "👍 D'accord! Y a-t-il autre chose que je puisse vous aider? (Alright! Is there anything else I can help you with?)"
     
-    # Calculate actual end position
-    actual_end = min(start + len(selected_blanes) - 1, total_blanes)
-    
-    # Add header with range info
-    output.append(f"📋 Blanes List (Items {start}-{actual_end} of {total_blanes} total)")
-    output.append("")
-    
-    # Add blanes with their actual position numbers
-    for i, blane in enumerate(selected_blanes, start=start):
-        output.append(f"{i}. {blane['name']} — MAD. {blane['price_current']} (ID: {blane['id']}) - BlaneType: {blane['type']} - TimeType: {blane['type_time']}")
-    
-    # Add navigation hints
-    output.append("")
-    if actual_end < total_blanes:
-        next_start = actual_end + 1
-        output.append(f"💡 Voulez-vous voir les suivants? (Items {next_start}-{min(next_start + offset - 1, total_blanes)})")
-    
-    return "\n".join(output)
-
-@tool("handle_user_pagination_response")
-def handle_user_pagination_response(user_sentiment: PaginationSentiment, current_start: int, current_offset: int, total_blanes: int) -> str:
-    """
-    Handle user response for pagination navigation.
-    
-    Args:
-        user_sentiment: PaginationSentiment.POSITIVE or PaginationSentiment.NEGATIVE
-        current_start: Current start position from session
-        current_offset: Current offset from session
-        total_blanes: Total number of blanes
-    
-    Returns:
-        Next set of blanes if positive, or appropriate message if negative
-    """
-    if user_sentiment == PaginationSentiment.POSITIVE:
-        # Calculate next start position
-        next_start = current_start + current_offset
-        
-        if next_start <= total_blanes:
-            # Update session with new start position
-            # set_session('current_start', next_start)
-            return blanes_list(next_start, current_offset)
-        else:
-            return "❌ Vous êtes déjà à la fin de la liste. (You're already at the end of the list.)"
-    
-    elif user_sentiment == PaginationSentiment.NEGATIVE:
-        return "👍 D'accord! Y a-t-il autre chose que je puisse vous aider? (Alright! Is there anything else I can help you with?)"
-    
-    else:
-        return "❓ Je n'ai pas compris votre réponse. Dites 'oui' pour voir plus ou 'non' pour arrêter. (I didn't understand your response. Say 'yes' to see more or 'no' to stop.)"
+#     else:
+#         return "❓ Je n'ai pas compris votre réponse. Dites 'oui' pour voir plus ou 'non' pour arrêter. (I didn't understand your response. Say 'yes' to see more or 'no' to stop.)"
 
 @tool("get_available_time_slots")
 def get_available_time_slots(blane_id: int, date: str) -> str:
@@ -394,7 +294,7 @@ def get_available_time_slots(blane_id: int, date: str) -> str:
         result = slots_response.json()
 
         if result.get("type") != "time":
-            return "❌ Unsupported reservation type returned by the API."
+            return "❌ Unsupported reservation type returned by the API. Try get_available_periods instead."
 
         time_slots = result.get("data", [])
         available_slots = [
@@ -444,7 +344,7 @@ def get_available_periods(blane_id: int) -> str:
             return f"❌ Blane with ID {blane_id} not found."
 
         if blane.get("type") != "reservation" or blane.get("type_time") != "date":
-            return "❌ Unsupported reservation type returned by the API."
+            return "❌ Unsupported reservation type returned by the API. Try get_available_time_slots instead."
 
         slug = blane.get("slug")
         if not slug:
@@ -479,6 +379,7 @@ def get_available_periods(blane_id: int) -> str:
 @tool("blanes_info")
 def get_blane_info(blane_id: int):
     """
+    Gives details of any blane using its ID.
     Returns a detailed, user-friendly WhatsApp message about a specific blane.
     """
     token = get_token()
@@ -490,22 +391,12 @@ def get_blane_info(blane_id: int):
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json"
     }
-    # params = {
-    #     "status": "active",
-    #     "sort_by": "created_at",
-    #     "sort_order": "desc",
-    #     "pagination_size": 100
-    # }
 
     try:
-        # response = httpx.get(url, headers=headers, params=params)
         response = httpx.get(url, headers=headers)
         response.raise_for_status()
         blane = response.json().get("data", [])
         print(blane)
-        # blane = next((b for b in blanes if b["id"] == blane_id), None)
-        # if not blane:
-        #     return f"❌ Blane with ID {blane_id} not found."
 
 
         msg = f"📋 *Blane Details*\n\n"
@@ -575,14 +466,69 @@ def get_blane_info(blane_id: int):
             msg += f"\n📌 *Conditions:* {blane['conditions']}"
         if blane.get("rating") is not None:
             msg += f"\n⭐ *Rating:* {float(blane['rating']):.1f}"
+        
 
+
+        msg += "\n\nDo you want me to book this for you, or see other blanes?\nButtons: [Book this] [See others]"
         return msg
 
     except httpx.HTTPStatusError as e:
         return f"❌ HTTP Error {e.response.status_code}: {e.response.text}"
 
 
-@tool("Before_create_reservation")
+@tool("list_categories")
+def list_categories() -> str:
+    """Lists all available categories."""
+    token = get_token()
+    if not token:
+        return "❌ Failed to retrieve token. Please try again later."
+    
+    url = f"{BASEURLBACK}/categories"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+    
+    try:
+        response = httpx.get(url, headers=headers)
+        response.raise_for_status()
+        data = response.json()
+
+        categories = data.get("data", [])
+        
+        if not categories:
+            return "No categories available at the moment."
+        
+        # Create user-friendly display
+        result_text = "🏷️ *Which kind of items are you looking for?*\n\n"
+        
+        for cat in categories:
+            cat_id = cat.get("id")
+            cat_name = cat.get("name", "Unknown Category")
+            result_text += f"• {cat_name} (ID: {cat_id})\n"
+        
+        result_text += "\nPlease let me know which category interests you!"
+        
+        return result_text
+
+    except httpx.HTTPStatusError as e:
+        error_msg = f"❌ HTTP Error {e.response.status_code}"
+        if e.response.status_code == 401:
+            error_msg += ": Authentication failed. Please check your credentials."
+        elif e.response.status_code == 404:
+            error_msg += ": Categories endpoint not found."
+        else:
+            error_msg += f": {e.response.text}"
+        return error_msg
+        
+    except httpx.RequestError as e:
+        return f"❌ Connection Error: Unable to reach the server. Please check your internet connection."
+        
+    except Exception as e:
+        return f"❌ Unexpected Error: {str(e)}"
+
+
+@tool("before_create_reservation")
 def prepare_reservation_prompt(blane_id: int) -> str:
     """
     This tool will prepare a reservation prompt for a specific blane. Run this tool before `create_reservation`.
@@ -661,17 +607,17 @@ def prepare_reservation_prompt(blane_id: int) -> str:
         msg += f"6. *Delivery Address*: (Place where order has to be delivered)\n"
         msg += f"7. *Comments*: (Any special instructions?)\n"
     elif is_reservation and type_time == "time":
-        msg += f"4. *Date*: (Available: {date_range}) Date Format: DD-MM-YYYY\n"
-        msg += f"5. *Time*: (Available slots: {slots}) Time Format: HH:MM\n"
-        msg += f"6. *Quantity*: (How many units?)\n"
-        msg += f"7. *Number of Persons*: (People attending)\n"
-        msg += f"8. *Comments*: (Any requests?)\n"
+        msg += f"5. *Date*: (Available: {date_range}) Date Format: YYYY-MM-DD\n"
+        msg += f"6. *Time*: (Available slots: {slots}) Time Format: HH:MM\n"
+        msg += f"7. *Quantity*: (How many units?)\n"
+        msg += f"8. *Number of Persons*: (People attending)\n"
+        msg += f"9. *Comments*: (Any requests?)\n"
     elif is_reservation and type_time == "date":
-        msg += f"4. *Start Date*: (Between {date_range}) Date Format: DD-MM-YYYY\n"
-        msg += f"5. *End Date*: (Between {date_range}) Date Format: DD-MM-YYYY\n"
-        msg += f"6. *Quantity*: (How many units?)\n"
-        msg += f"7. *Number of Persons*: (People attending)\n"
-        msg += f"8. *Comments*: (Any requests?)\n"
+        msg += f"5. *Start Date*: (Between {date_range}) Date Format: YYYY-MM-DD\n"
+        msg += f"6. *End Date*: (Between {date_range}) Date Format: YYYY-MM-DD\n"
+        msg += f"7. *Quantity*: (How many units?)\n"
+        msg += f"8. *Number of Persons*: (People attending)\n"
+        msg += f"9. *Comments*: (Any requests?)\n"
 
     return msg.strip()
 
@@ -693,7 +639,7 @@ def create_reservation(
     comments: str = "N/A"
 ) -> str:
     """
-    Handles reservation or order creation. Must run `before_create_reservation` first.
+    Handles reservation or order creation.
     """
     from datetime import datetime, timedelta
     import httpx
@@ -728,9 +674,23 @@ def create_reservation(
         else:
             total_price += float(blane.get("livraison_in_city", 0))
 
-    # 🔸 Handle Partial Payments
+    # 🔸 Determine supported payment options from blane
+    supports_online = bool(blane.get("online"))
+    supports_partiel = bool(blane.get("partiel"))
+    supports_cash = bool(blane.get("cash"))
+
+    # 🔸 Choose payment route: prefer partial if available, else full online, else cash
+    payment_route = "cash"
+    if supports_partiel:
+        payment_route = "partiel"
+    elif supports_online:
+        payment_route = "online"
+    elif supports_cash:
+        payment_route = "cash"
+
+    # 🔸 Handle Partial Payments amount
     partiel_price = 0
-    if blane.get("partiel") and blane.get("partiel_field"):
+    if payment_route == "partiel" and blane.get("partiel_field"):
         percent = float(blane["partiel_field"])
         partiel_price = round((percent / 100) * total_price)
 
@@ -801,7 +761,7 @@ def create_reservation(
             "time": time if type_time == "time" else None,
             "quantity": quantity,
             "number_persons": number_persons,
-            "payment_method": "cash",
+            "payment_method": payment_route,
             "status": "pending",
             "total_price": total_price - partiel_price,
             "partiel_price": partiel_price,
@@ -821,7 +781,7 @@ def create_reservation(
             "city": city,
             "delivery_address": delivery_address,
             "quantity": quantity,
-            "payment_method": "cash",
+            "payment_method": payment_route,
             "status": "pending",
             "total_price": total_price - partiel_price,
             "partiel_price": partiel_price,
@@ -845,10 +805,196 @@ def create_reservation(
         res = httpx.post(f"{API}", headers=headers, json=payload)
         res.raise_for_status()
         data = res.json()
+
+        # If online or partial payment is selected/supported, initiate payment and return URL
+        if payment_route in ("online", "partiel"):
+            # Extract reference from response payload: data.data.NUM_RES or data.data.NUM_ORD
+            reference = None
+            try:
+                nested = data.get("data") if isinstance(data, dict) else None
+                if isinstance(nested, dict):
+                    reference = nested.get("NUM_RES") or nested.get("NUM_ORD")
+            except Exception:
+                reference = None
+
+            if reference:
+                try:
+                    pay_url = f"{BASEURLFRONT}/payment/cmi/initiate"
+                    pay_res = httpx.post(pay_url, headers=headers, json={"number": reference})
+                    pay_res.raise_for_status()
+                    pay_data = pay_res.json()
+                    if pay_data.get("status") and pay_data.get("payment_url"):
+                        return f"✅ Created. Ref: {reference}. 💳 Pay here: {pay_data.get('payment_url')}"
+                    else:
+                        return f"✅ Success! {data}. Payment initiation: {pay_data}"
+                except Exception as e:
+                    return f"✅ Success! {data}, but payment link failed: {str(e)}"
+
+        # Cash/offline flow
         return f"✅ Success! {data}"
     except Exception as e:
         return f"❌ Error submitting reservation: {str(e)}"
 
+
+@tool("preview_reservation")
+def preview_reservation(
+    session_id: str,
+    blane_id: int,
+    name: str = "N/A",
+    email: str = "N/A",
+    phone: str = "N/A",
+    city: str = "N/A",
+    date: str = "N/A",
+    end_date: str = "N/A",
+    time: str = "N/A",
+    quantity: int = 1,
+    number_persons: int = 1,
+    delivery_address: str = "N/A",
+    comments: str = "N/A"
+) -> str:
+    """
+    Prepare a booking recap with dynamic price calculation (including delivery and partial payments) WITHOUT creating it.
+    Shows a confirmation prompt with Buttons: [Confirm] [Edit] [Cancel].
+    """
+    from datetime import datetime, timedelta
+    import httpx
+
+    token = get_token()
+    if not token:
+        return "❌ Failed to retrieve token. Please try again later."
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+
+    # Fetch blane
+    try:
+        res = httpx.get(f"{BASEURLBACK}/blanes/{blane_id}", headers=headers)
+        res.raise_for_status()
+        blane = res.json().get("data", {})
+        if not blane:
+            return f"❌ Blane with ID {blane_id} not found."
+    except Exception as e:
+        return f"❌ Error fetching blane: {e}"
+
+    blane_type = blane.get("type")
+    type_time = blane.get("type_time")
+
+    # Pricing
+    try:
+        base_price = float(blane.get("price_current", 0))
+    except Exception:
+        base_price = 0.0
+    total_price = base_price * max(1, int(quantity))
+
+    # Delivery for physical orders
+    delivery_cost = 0.0
+    if blane_type == "order" and not blane.get("is_digital"):
+        if blane.get("city") != city:
+            delivery_cost = float(blane.get("livraison_out_city", 0))
+        else:
+            delivery_cost = float(blane.get("livraison_in_city", 0))
+        total_price += delivery_cost
+
+    # Payment route
+    supports_online = bool(blane.get("online"))
+    supports_partiel = bool(blane.get("partiel"))
+    supports_cash = bool(blane.get("cash"))
+
+    payment_route = "cash"
+    if supports_partiel:
+        payment_route = "partiel"
+    elif supports_online:
+        payment_route = "online"
+    elif supports_cash:
+        payment_route = "cash"
+
+    # Partial amount
+    partiel_percent = None
+    partiel_price = 0
+    if payment_route == "partiel" and blane.get("partiel_field"):
+        try:
+            partiel_percent = float(blane.get("partiel_field"))
+            partiel_price = round((partiel_percent / 100) * total_price)
+        except Exception:
+            partiel_percent = None
+            partiel_price = 0
+
+    # Validate date/time inputs for reservation
+    try:
+        if blane_type == "reservation":
+            if type_time == "time":
+                # validate date
+                if date and date != "N/A":
+                    _ = datetime.strptime(date, "%Y-%m-%d")
+                else:
+                    return "❌ Please provide a date (YYYY-MM-DD)."
+                # validate time
+                if time and time != "N/A":
+                    _ = datetime.strptime(time, "%H:%M")
+                else:
+                    return "❌ Please provide a time (HH:MM)."
+            elif type_time == "date":
+                if not (date and end_date and date != "N/A" and end_date != "N/A"):
+                    return "❌ Please provide start and end dates (YYYY-MM-DD)."
+                _ = datetime.strptime(date, "%Y-%m-%d")
+                _ = datetime.strptime(end_date, "%Y-%m-%d")
+    except Exception:
+        return "❌ Invalid date or time format."
+
+    # Build recap
+    blane_name = blane.get("name", "Unknown")
+    lines = [
+        "Great. I’ll need the booking info.",
+        "",
+        f"Please review:",
+        f"- Blane: {blane_name}",
+    ]
+
+    if blane_type == "reservation":
+        if type_time == "time":
+            lines += [
+                f"- Date: {date}",
+                f"- Time: {time}",
+            ]
+        else:
+            lines += [
+                f"- Start Date: {date}",
+                f"- End Date: {end_date}",
+            ]
+        lines += [
+            f"- Quantity: {quantity}",
+            f"- Persons: {number_persons}",
+        ]
+    else:
+        lines += [
+            f"- Quantity: {quantity}",
+        ]
+        if delivery_address and delivery_address != "N/A":
+            lines.append(f"- Delivery Address: {delivery_address}")
+
+    lines += [
+        f"- City: {city}",
+        f"- Payment: {'Partial' if payment_route=='partiel' else ('Online' if payment_route=='online' else 'Cash')}",
+    ]
+
+    if blane_type == "order" and not blane.get("is_digital"):
+        lines.append(f"- Delivery Cost: {int(delivery_cost)} MAD")
+
+    lines.append(f"- Total: {int(total_price)} MAD")
+    if payment_route == "partiel" and partiel_price:
+        lines.append(f"- Due now (partial): {int(partiel_price)} MAD")
+    elif payment_route == "online":
+        lines.append(f"- Due now: {int(total_price)} MAD")
+
+    lines += [
+        "",
+        "Confirm booking?",
+        "Buttons: [Confirm] [Edit] [Cancel]",
+    ]
+
+    return "\n".join(lines)
 
 @tool("list_reservations")
 def list_reservations(email: str) -> str:
@@ -889,181 +1035,20 @@ def list_reservations(email: str) -> str:
 
     return result
 
-# @tool("create_reservation")
-# def create_reservation(session_id: str, blane_id: int, name: str = "N/A", email: str = "N/A", phone: str = "N/A", city: str = "N/A", date: str = "N/A", end_date: str = "N/A", time: str = "N/A", quantity: int = 1, number_persons: int = 0, comments: str = "N/A") -> str:
-#     """
-#     Handles reservation creation.
-#     IMPORTANT: Do not call this tool directly. Always call `before_create_reservation` first to determine required fields, collect them from the user, and then call this tool.
-#     """
-#     from datetime import datetime, timedelta
-#     import httpx
-
-#     token = get_token()
-#     if not token:
-#         return "❌ Failed to retrieve token."
-
-#     headers = {
-#         "Authorization": f"Bearer {token}",
-#         "Content-Type": "application/json"
-#     }
-
-#     # Step 1: Get blane info
-#     try:
-#         res = httpx.get(f"{BASEURLBACK}/blanes/{blane_id}", headers=headers)
-#         res.raise_for_status()
-#         # blane = next((b for b in res.json()["data"] if b["id"] == blane_id), None)
-#         if not blane:
-#             return f"❌ Blane with ID {blane_id} not found."
-#     except Exception as e:
-#         return f"❌ Error fetching blane: {e}"
-
-#     blane_type = blane.get("type")
-#     blane_time_type = blane.get("type_time")
-
-#     # Step 2: Calculate Total Cost
-#     base_price = float(blane.get("price_current", 0))
-#     total_price = base_price * quantity
-
-#     # Step 3: Add delivery cost if order and physical
-#     if blane["type"] == "order" and not blane.get("is_digital"):
-#         if blane.get("city") != city:
-#             total_price += float(blane.get("livraison_out_city", 0))
-#         else:
-#             total_price += float(blane.get("livraison_in_city", 0))
-
-#     # Step 4: Handle partiel payments
-#     partiel_price = 0
-#     if blane.get("partiel") and blane.get("partiel_field"):
-#         percent = float(blane["partiel_field"])
-#         partiel_price = round((percent / 100) * total_price)
-
-#     english_to_french_days = {
-#         "Monday": "Lundi", "Tuesday": "Mardi", "Wednesday": "Mercredi",
-#         "Thursday": "Jeudi", "Friday": "Vendredi", "Saturday": "Samedi", "Sunday": "Dimanche"
-#     }
-
-#     current_date = datetime.now().strftime("%Y-%m-%d")
-#     if date != "N/A" and date < current_date:
-#         return f"❌ Invalid reservation date: {date}. Please choose a future date."
-
-#     # Step 5: Validate time/date based on type
-#     if blane_type == "reservation":
-#         jours_open = blane.get("jours_creneaux", [])
-#         user_day = datetime.strptime(date, "%Y-%m-%d").strftime("%A")
-#         user_day_fr = english_to_french_days.get(user_day, "")
-
-#         if jours_open and user_day_fr.capitalize() not in jours_open:
-#             return f"🚫 Blane is closed on {user_day}. Open days: {', '.join(jours_open)}"
-
-#         if blane_time_type == "time":
-#             heure_debut = parse_time_only(blane["heure_debut"])
-#             heure_fin = parse_time_only(blane["heure_fin"])
-#             slot_time = datetime.strptime(time, "%H:%M").time()
-
-#             if not heure_debut or not heure_fin:
-#                 return f"❌ Invalid opening/closing time format in blane."
-
-#             interval = int(blane["intervale_reservation"])
-#             current = datetime.combine(datetime.today(), heure_debut)
-#             end = datetime.combine(datetime.today(), heure_fin)
-#             valid_slots = []
-
-#             while current <= end:
-#                 valid_slots.append(current.strftime("%H:%M"))
-#                 current += timedelta(minutes=interval)
-
-#             if time not in valid_slots:
-#                 return f"🕓 Invalid slot. Valid slots: {', '.join(valid_slots)}"
-
-#         else:
-#             start = parse_datetime(blane.get("start_date"))
-#             end = parse_datetime(blane.get("expiration_date"))
-#             user_date = datetime.strptime(date, "%Y-%m-%d")
-#             user_end_date = datetime.strptime(end_date, "%Y-%m-%d")
-
-#             if not start or not end:
-#                 return f"❌ Invalid start or expiration date format in blane."
-
-#             if not (start.date() <= user_date.date() <= end.date()):
-#                 return f"❌ Start date must be within {start.date()} to {end.date()}"
-
-#             if not (start.date() <= user_end_date.date() <= end.date()):
-#                 return f"❌ End date must be within {start.date()} to {end.date()}"
-
-#     # Step 6: Build Payload
-#     payload = {
-#         "blane_id": blane_id,
-#         "name": name,
-#         "email": email,
-#         "phone": phone,
-#         "city": city,
-#         "date": date,
-#         "end_date": end_date,
-#         "time": time,
-#         "comments": comments,
-#         "quantity": quantity,
-#         "number_persons": number_persons,
-#         "status": "pending",
-#         "total_price": total_price - partiel_price,
-#         "payment_method": "cash",
-#         "partiel_price": partiel_price
-#     }
-#     print(payload)
-#     # Step 7: Send Reservation Request
-#     try:
-#         res = httpx.post(f"{BASEURLBACK}/reservations", headers=headers, json=payload)
-#         res.raise_for_status()
-#         reservation = res.json()
-#         return f"✅ Reservation successful! Reservation Number: {reservation.get('reservation_number')}"
-#     except Exception as e:
-#         return f"❌ Error creating reservation: {str(e)}"
-
-
-# @tool("list_reservations")
-# def list_reservations(email: str) -> str:
-#     """
-#     Get the list of the authenticated user's reservations.
-#     Requires user's email.
-#     """
-
-#     token = get_token()
-#     if not token:
-#         return "❌ Failed to retrieve token."
-
-#     url = f"{BASEURLBACK}/reservations?email={email}"
-#     headers = {
-#         "Authorization": f"Bearer {token}",
-#         "Content-Type": "application/json"
-#     }
-
-#     response = requests.get(url, headers=headers)
-#     print(response)
-
-#     if response.status_code != 200:
-#         return f"❌ Failed to fetch reservations: {response.text}"
-
-#     data = response.json()["data"]
-#     if not data:
-#         return "📭 You have no reservations at the moment."
-
-#     return data
-    
-#     # message = "📋 Your Reservations:\n"
-#     # for res in data:
-#     #     message += f"- Ref: {res['NUM_RES']} | Blane ID: {res['blane_id']} | {res['date']} at {res['time']} ({res['status']})\n"
-
-#     # return message.strip()
-
+# District mapping with corrected structure
 district_map = {
     "anfa": [
         "bourgogne",
-        "sidi belyout (centre ville, médina)",
+        "sidi belyout",
+        "centre ville", 
+        "médina",
         "maârif",
-        "ain diab (corniche)",
+        "ain diab",
+        "corniche",
         "gauthier",
         "racine",
         "palmier",
-        "triangle d’or",
+        "triangle d'or",
         "oasis",
         "cil"
     ],
@@ -1082,7 +1067,8 @@ district_map = {
     "aïn sebaâ – hay mohammadi": [
         "aïn sebaâ",
         "hay mohammadi",
-        "roches noires (belvédère)"
+        "roches noires",
+        "belvédère"
     ],
     "al fida – mers sultan": [
         "al fida",
@@ -1095,10 +1081,10 @@ district_map = {
         "sidi moumen",
         "zenata"
     ],
-    "moulay rachid – ben m’sick": [
+    "moulay rachid – ben m'sick": [
         "moulay rachid",
         "sidi othmane",
-        "ben m’sick",
+        "ben m'sick",
         "sbata"
     ],
     "surroundings": [
@@ -1110,13 +1096,347 @@ district_map = {
     ]
 }
 
-@tool("Search_blanes_by_location")
-def search_blanes_by_location(district: str, sub_district: str = "") -> str:
+
+@tool("list_districts_and_subdistricts")
+def list_districts_and_subdistricts() -> str:
+    """Lists all districts and sub districts."""
+    return district_map
+
+
+@tool("list_blanes_by_location_and_category")
+def list_blanes_by_location_and_category(
+    district_or_subdistrict: str = "",
+    category_id: int = None,
+    city: str = "",
+    start: int = 1,
+    offset: int = 10
+) -> str:
     """
-    Retrieves blanes based on sub-district first. If fewer than 3 are found,
-    falls back to all sub-districts in the district. If still insufficient,
-    falls back to any district-level matches.
+    Retrieve blanes by location and/or category with improved filtering logic.
+    
+    Args:
+        district_or_subdistrict: District name or sub-district name  
+        category_id: id of user selected category
+        city: City name
+        start: Starting position (default: 1)
+        offset: Number of items to show (default: 10, max: 25)
     """
+    # Validate parameters
+    
+    if start < 1:
+        start = 1
+    if offset < 1:
+        offset = 10
+    if offset > 25:
+        offset = 25
+    
+    token = get_token()
+    if not token:
+        return "❌ Failed to retrieve token. Please try again later."
+
+    api_page = ((start - 1) // 10) + 1  # Which API page contains our start position
+    items_needed = offset
+    
+    # We might need multiple API pages if offset spans across pages
+    url = f"{BASEURLBACK}/getBlanesByCategory"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+
+    all_fetched_blanes = []
+    total_blanes = 0
+    
+    try:
+        # Fetch enough pages to get our desired range
+        current_api_page = api_page
+        items_collected = 0
+        
+        while items_collected < items_needed:
+            params = {
+                "status": "active",
+                "sort_by": "created_at",
+                "sort_order": "desc",
+                "per_page": 10,
+                "page": current_api_page,
+                "include": "blaneImages,category",
+            }
+
+            if category_id:
+                params["category_id"] = category_id
+            if city:
+                params["city"] = city
+            if district_or_subdistrict:
+                params["search"] = district_or_subdistrict
+            
+            response = httpx.get(url, headers=headers, params=params)
+            response.raise_for_status()
+            data = response.json()
+            
+            page_blanes = data.get('data', [])
+            meta = data.get('meta', {})
+            total_blanes = meta.get('total', 0)
+
+            if start+offset > total_blanes:
+                offset = total_blanes-start + 1
+            
+            if not page_blanes:
+                break
+            
+            all_fetched_blanes.extend(page_blanes)
+            items_collected += len(page_blanes)
+            current_api_page += 1
+            
+            # Stop if we've reached the end of available data
+            if len(all_fetched_blanes) >= total_blanes:
+                break
+        
+        # Calculate the actual start position in our fetched data
+        start_in_fetched = (start - 1) % 10 if api_page == ((start - 1) // 10) + 1 else 0
+        
+        # Get the exact slice we need
+        if start > total_blanes:
+            return f"❌ Start position {start} is beyond available blanes. Total blanes: {total_blanes}"
+        
+        # Adjust for the actual position in the complete dataset
+        actual_start_index = start - ((api_page - 1) * 10) - 1
+        if actual_start_index < 0:
+            actual_start_index = 0
+            
+        end_index = min(actual_start_index + offset, len(all_fetched_blanes))
+        selected_blanes = all_fetched_blanes[actual_start_index:end_index]
+        
+        if not selected_blanes:
+            return f"❌ No blanes found in range {start} to {start + offset - 1}"
+            
+    except httpx.HTTPStatusError as e:
+        return f"❌ HTTP Error {e.response.status_code}: {e.response.text}"
+    except Exception as e:
+        return f"❌ Error fetching blanes: {str(e)}"
+    
+    # Build output
+    output = ["Here are some options:"]
+    
+    # Calculate actual end position
+    actual_end = min(start + len(selected_blanes) - 1, total_blanes)
+    
+    # Add header with range info
+    output.append(f"📋 Blanes List (Items {start}-{actual_end} of {total_blanes} total)")
+    output.append("")
+    
+    # Add blanes with their actual position numbers (title + price if available)
+    for i, blane in enumerate(selected_blanes, start=start):
+        name = blane.get('name', 'Unknown')
+        price = blane.get('price_current')
+        id = blane.get('id')
+        if price:
+            output.append(f"{i}. {name} — {price} Dhs (blane_id: {id})")
+        else:
+            output.append(f"{i}. {name} (blane_id: {id})")
+        #output.append(f"{i}. {blane['name']} — MAD. {blane['price_current']} (ID: {blane['id']}) - BlaneType: {blane['type']} - TimeType: {blane['type_time']}")
+    
+    # Add navigation hints
+    output.append("")
+    if actual_end < total_blanes:
+        next_start = actual_end + 1
+        # output.append(f"💡 Voulez-vous voir les suivants? (Items {next_start}-{min(next_start + offset - 1, total_blanes)})")
+        output.append(f"\nWant more?\nButtons: [Show 10 more] [See details]")
+    else:
+        output.append("\nThat’s all in this district. Want me to suggest blanes in another district?")
+    return "\n".join(output)
+
+    # try:
+    #     response = httpx.get(f"{BASEURLBACK}/blanes", headers=headers, params=params)
+    #     response.raise_for_status()
+    #     all_blanes = response.json().get("data", [])
+    # except Exception as e:
+    #     return f"❌ Error fetching blanes: {str(e)}"
+
+    # # Normalize input filters
+    # district_norm = _normalize_location_text(district)
+    # sub_district_norm = _normalize_location_text(sub_district)
+    # city_norm = _normalize_location_text(city)
+    # category_norm = category.lower().strip() if category else ""
+
+    # # Get all sub-districts for the specified district
+    # district_subs = []
+    # if district_norm:
+    #     district_subs = [_normalize_location_text(sub) for sub in district_map.get(district_norm, [])]
+
+    # # Filter blanes based on criteria
+    # matched_blanes = []
+    
+    # for blane in all_blanes:
+    #     name = blane.get("name", "")
+    #     description = blane.get("description") or ""
+    #     blane_city = _normalize_location_text(blane.get("city", ""))
+        
+    #     # Create searchable text
+    #     searchable_text = _normalize_location_text(f"{name} {description}")
+        
+    #     # Apply filters
+    #     passes_city_filter = not city_norm or city_norm in blane_city
+    #     passes_category_filter = not category_norm or _matches_category(name, description, category_norm)
+        
+    #     # Location filtering logic
+    #     passes_location_filter = True
+    #     location_score = 0  # For prioritization
+        
+    #     if sub_district_norm or district_norm:
+    #         passes_location_filter = False
+            
+    #         # Check for sub-district match (highest priority)
+    #         if sub_district_norm and sub_district_norm in searchable_text:
+    #             passes_location_filter = True
+    #             location_score = 3
+    #         # Check for other sub-districts in the same district (medium priority)
+    #         elif district_norm:
+    #             for sub in district_subs:
+    #                 if sub and sub in searchable_text:
+    #                     passes_location_filter = True
+    #                     location_score = 2 if sub == sub_district_norm else 1
+    #                     break
+        
+    #     # Only include blanes that pass all filters
+    #     if passes_city_filter and passes_category_filter and passes_location_filter:
+    #         blane['_location_score'] = location_score
+    #         matched_blanes.append(blane)
+    
+    # # Sort by location score (prioritize exact sub-district matches)
+    # matched_blanes.sort(key=lambda x: x.get('_location_score', 0), reverse=True)
+    
+    # total_matches = len(matched_blanes)
+    
+    # if total_matches == 0:
+    #     filter_description = []
+    #     if city_norm:
+    #         filter_description.append(f"city: {city}")
+    #     if district_norm:
+    #         filter_description.append(f"district: {district}")
+    #     if sub_district_norm:
+    #         filter_description.append(f"sub-district: {sub_district}")
+    #     if category_norm:
+    #         filter_description.append(f"category: {category}")
+        
+    #     filters_text = ", ".join(filter_description) if filter_description else "the given filters"
+    #     return f"❌ No blanes found for {filters_text}. Try different search criteria."
+
+    # # Apply pagination
+    # end_pos = min(start + offset - 1, total_matches)
+    # if start > total_matches:
+    #     return f"❌ Start position {start} exceeds total results ({total_matches}). Try a lower start position."
+
+    # paginated_blanes = matched_blanes[start - 1:end_pos]
+
+    # # Build output
+    # output_lines = ["Here are some options:"]
+    
+    # # Add filter summary
+    # active_filters = []
+    # if city_norm:
+    #     active_filters.append(f"City: {city}")
+    # if district_norm:
+    #     active_filters.append(f"District: {district}")
+    # if sub_district_norm:
+    #     active_filters.append(f"Sub-district: {sub_district}")
+    # if category_norm:
+    #     active_filters.append(f"Category: {category}")
+    
+    # filter_summary = " | ".join(active_filters) if active_filters else "All locations"
+    # output_lines.append(f"📋 Filtered Results: {filter_summary}")
+    # output_lines.append(f"📊 Showing items {start}-{end_pos} of {total_matches} matches")
+    # output_lines.append("")
+    
+    # # Add blanes
+    # for idx, blane in enumerate(paginated_blanes, start=start):
+    #     name = blane.get("name", "Unknown")
+    #     price = blane.get("price_current")
+    #     blane_id = blane.get('id')
+        
+    #     if price:
+    #         output_lines.append(f"{idx}. {name} — {price} Dhs (blane_id: {blane_id})")
+    #     else:
+    #         output_lines.append(f"{idx}. {name} (blane_id: {blane_id})")
+
+    # # Add pagination info
+    # output_lines.append("")
+    # if end_pos < total_matches:
+    #     next_start = end_pos + 1
+    #     max_next_end = min(next_start + offset - 1, total_matches)
+    #     output_lines.append(f"💡 More results available (Items {next_start}-{max_next_end})")
+    #     output_lines.append("Buttons: [Show more] [See details] [Change filters]")
+    # else:
+    #     output_lines.append("That's all for these filters.")
+    #     output_lines.append("Want to try different search criteria or see details?")
+
+    # return "\n".join(output_lines)
+
+
+@tool("handle_user_pagination_response")
+def handle_user_pagination_response(user_sentiment: PaginationSentiment, current_start: int, current_offset: int, total_blanes: int, district_or_subdistrict: str = "", category_id: int = None, city: str = "") -> str:
+    """
+    Handle user response for pagination navigation for list_blanes_by_location_and_category.
+    
+    Args:
+        user_sentiment: PaginationSentiment.POSITIVE or PaginationSentiment.NEGATIVE
+        current_start_: Current start position from session
+        current_offset: Current offset from session
+        total_blanes: Total number of blanes
+        district_or_subdistrict: District name or sub-district name
+        category_id: id of user selected category
+        city: City name 
+    
+    Returns:
+        Next set of blanes if positive, or appropriate message if negative
+    """
+    if user_sentiment == PaginationSentiment.POSITIVE:
+        # Calculate next start position
+        next_start = current_start + current_offset
+        
+        if next_start <= total_blanes:
+            return list_blanes_by_location_and_category(district_or_subdistrict, category_id, city, next_start, current_offset)
+        else:
+            return "❌ Vous êtes déjà à la fin de la liste. (You're already at the end of the list.)"
+    
+    elif user_sentiment == PaginationSentiment.NEGATIVE:
+        return "👍 D'accord! Y a-t-il autre chose que je puisse vous aider? (Alright! Is there anything else I can help you with?)"
+    
+    else:
+        return "❓ Je n'ai pas compris votre réponse. Dites 'oui' pour voir plus ou 'non' pour arrêter. (I didn't understand your response. Say 'yes' to see more or 'no' to stop.)"
+
+
+@tool("find_blanes_by_name_or_link")
+def find_blanes_by_name_or_link(query: str, limit: int = 10, score_threshold: int = 60) -> str:
+    """
+    Find blanes when the user provides a blane name or a link.
+    - If a link is provided, extracts the last path segment as the blane name (decodes hyphens and %20).
+    - Uses fuzzy matching to search across all active blanes by name/slug.
+    - Returns matches formatted as: "{idx} - {name} — {price} Dhs (blane_id: {id})".
+
+    Args:
+        query: Blane name or link.
+        limit: Maximum number of results to return (default 10).
+        score_threshold: Minimum fuzzy match score to include (default 60).
+    """
+    # Normalize user query (handle link vs. plain name)
+    def _extract_name_from_query(q: str) -> str:
+        q = (q or "").strip()
+        try:
+            if q.startswith("http://") or q.startswith("https://") or q.startswith("www."):
+                parsed = urlparse(q if q.startswith("http") else f"https://{q}")
+                last = [seg for seg in parsed.path.split("/") if seg][-1:] or [""]
+                candidate = unquote(last[0])
+                # Convert common slug separators to spaces
+                candidate = candidate.replace("-", " ").replace("_", " ").strip()
+                return candidate if candidate else q
+            return q
+        except Exception:
+            return q
+
+    user_text = _extract_name_from_query(query)
+    if not user_text:
+        return "❌ Please provide a valid blane name or link."
+
     token = get_token()
     if not token:
         return "❌ Failed to retrieve token. Please try again later."
@@ -1126,85 +1446,587 @@ def search_blanes_by_location(district: str, sub_district: str = "") -> str:
         "Content-Type": "application/json"
     }
 
-    params = {
-        "status": "active",
-        "sort_by": "created_at",
-        "sort_order": "desc",
-        "pagination_size": 100
-    }
-
+    # Fetch all active blanes with pagination
+    collected = []
+    page = 1
     try:
-        response = httpx.get(f"{BASEURLBACK}/blanes", headers=headers, params=params)
-        response.raise_for_status()
-        blanes = response.json().get("data", [])
+        while True:
+            params = {
+                "status": "active",
+                "sort_by": "created_at",
+                "sort_order": "desc",
+                "per_page": 100,
+                "page": page
+            }
+            resp = httpx.get(f"{BASEURLBACK}/blanes", headers=headers, params=params)
+            resp.raise_for_status()
+            payload = resp.json()
+            data = payload.get("data", [])
+            meta = payload.get("meta", {})
+            if not data:
+                break
+            collected.extend(data)
+            total = meta.get("total")
+            last_page = meta.get("last_page")
+            if last_page and page >= last_page:
+                break
+            if total and len(collected) >= int(total):
+                break
+            page += 1
+    except httpx.HTTPStatusError as e:
+        return f"❌ HTTP Error {e.response.status_code}: {e.response.text}"
     except Exception as e:
-        return f"❌ Error fetching blanes: {e}"
+        return f"❌ Error fetching blanes: {str(e)}"
 
-    district_lower = district.lower().strip()
-    sub_district_lower = sub_district.lower().strip()
+    if not collected:
+        return "❌ No blanes found."
 
-    # Get all sub-districts in the specified district
-    all_subs_in_district = district_map.get(district_lower, [])
-    all_subs_in_district_cleaned = [s.lower() for s in all_subs_in_district]
+    # Fuzzy score per blane (compare against name and slug)
+    query_norm = user_text.lower()
+    scored = []
+    for blane in collected:
+        name = (blane.get("name") or "").lower()
+        slug = (blane.get("slug") or "").lower().replace("-", " ").replace("_", " ")
+        s1 = fuzz.WRatio(query_norm, name) if name else 0
+        s2 = fuzz.partial_ratio(query_norm, name) if name else 0
+        s3 = fuzz.WRatio(query_norm, slug) if slug else 0
+        s4 = fuzz.partial_ratio(query_norm, slug) if slug else 0
+        score = max(s1, s2, s3, s4)
+        if score >= score_threshold:
+            scored.append((score, blane))
 
-    sub_matches = []
-    district_matches = []
+    if not scored:
+        return f"❌ No similar blanes found for '{user_text}'."
 
-    for blane in blanes:
-        desc = (blane.get("description") or "").lower()
-        blane_id = blane["id"]
+    scored.sort(key=lambda x: x[0], reverse=True)
+    top = [b for _, b in scored[: max(1, int(limit))]]
 
-        if sub_district_lower and sub_district_lower in desc:
-            sub_matches.append(blane_id)
-        elif not sub_district_lower:
-            # Look for matches across all sub-districts in district
-            for sd in all_subs_in_district_cleaned:
-                if sd in desc:
-                    sub_matches.append(blane_id)
-                    break
+    lines = []
+    for idx, blane in enumerate(top, start=1):
+        name = blane.get("name", "Unknown")
+        price = blane.get("price_current")
+        blane_id = blane.get("id")
+        if price:
+            lines.append(f"{idx} - {name} — {price} Dhs (blane_id: {blane_id})")
+        else:
+            lines.append(f"{idx} - {name} (blane_id: {blane_id})")
 
-    # If fewer than 3 found, look again for any sub-districts in this district
-    if len(sub_matches) < 3:
-        for blane in blanes:
-            desc = (blane.get("description") or "").lower()
-            blane_id = blane["id"]
-            if blane_id in sub_matches:
-                continue
-            for sd in all_subs_in_district_cleaned:
-                if sd in desc:
-                    district_matches.append(blane_id)
-                    break
+    return "\n".join(lines)
 
-    total_matches = sub_matches + [id for id in district_matches if id not in sub_matches]
 
-    if not total_matches:
-        return f"❌ No blanes found in district *{district}* or sub-district *{sub_district}*."
+# def _matches_category(name: str, description: str, category: str) -> bool:
+#     """
+#     Improved category matching with better keyword organization and fuzzy matching.
+#     """
+#     if not category:
+#         return True
+    
+#     category_lower = category.strip().lower()
+#     text_to_search = f"{name} {description or ''}".lower()
+    
+#     # Enhanced keyword mapping with more comprehensive terms
+#     category_keywords = {
+#         "restaurant": [
+#             # Core restaurant terms
+#             "restaurant", "resto", "food", "cuisine", "kitchen", "dining",
+#             # Meal types
+#             "café", "brunch", "goûters", "déjeunez", "dinner", "lunch", "breakfast",
+#             # Food items
+#             "pizzeria", "pizzas", "pâte", "sauce", "tomate", "ingrédients",
+#             # Experience terms  
+#             "gastronomie", "ambiance", "gnaoua", "artisanat", "créativité",
+#             # Drink terms
+#             "drinks", "bar", "cocktail", "beverage",
+#             # Specific restaurant names/types
+#             "bazenne", "cappero"
+#         ],
+#         "spa": [
+#             # Core spa services
+#             "spa", "massage", "hammam", "soin", "wellness", "détente", "relaxation",
+#             # Beauty services
+#             "beauté", "esthétique", "institut", "salon", "coiffure",
+#             # Hair services
+#             "cheveux", "brushing", "coupe", "lissant",
+#             # Nail services
+#             "manucure", "pédicure", "vernis",
+#             # Facial services
+#             "visage", "facial", "hydra", "gommage",
+#             # Treatment types
+#             "relaxant", "hydratant", "réparateur", "hydromassage",
+#             # Facilities
+#             "transats", "pool", "piscine",
+#             # Specific spa brands/names
+#             "fish", "musc", "taha", "nashi", "nelya", "jasmin"
+#         ],
+#         "activity": [
+#             # Core activity terms
+#             "activité", "activities", "activity", "fun", "entertainment",
+#             # Adventure activities
+#             "escape", "paintball", "accrobranche", "quad", "aventures",
+#             # Water activities  
+#             "toboggans", "piscines", "aquatiques", "natation", "eau", "tubing", "slide",
+#             # Gaming
+#             "laser game", "jeux", "bowling", "cinema", "cinéma",
+#             # Sports
+#             "sports", "sportives", "équipe", "team building",
+#             # Kids activities
+#             "enfants", "summer camp", "éducatif", "plein air",
+#             # Tech activities
+#             "robotique", "lego", "codage", "intelligence artificielle",
+#             # Creative activities
+#             "créatives", "culturelles", "projets innovants",
+#             # Business activities
+#             "corporate", "présentation", "team", "building",
+#             # Event spaces
+#             "villa", "terrain", "décor"
+#         ]
+#     }
+    
+#     # Get keywords for the category, fallback to the category itself
+#     keywords = category_keywords.get(category_lower, [category_lower])
+    
+#     # Check for exact matches and partial matches
+#     for keyword in keywords:
+#         if keyword in text_to_search:
+#             return True
+    
+#     # Additional fuzzy matching for common variations
+#     if category_lower in ["restaurant", "resto"]:
+#         return any(term in text_to_search for term in ["manger", "plat", "menu", "chef"])
+#     elif category_lower == "spa":
+#         return any(term in text_to_search for term in ["bien-être", "soins", "thérapie"])
+#     elif category_lower in ["activity", "activité"]:
+#         return any(term in text_to_search for term in ["loisir", "divertissement", "adventure"])
+    
+#     return False
 
-    # Intro message
-    sub_count = len(sub_matches)
-    district_only_count = len(total_matches) - sub_count
+# def _normalize_location_text(text: str) -> str:
+#     """
+#     Normalize location text for better matching.
+#     """
+#     if not text:
+#         return ""
+    
+#     # Convert to lowercase and strip
+#     normalized = text.lower().strip()
+    
+#     # Handle common variations and abbreviations
+#     location_variations = {
+#         "ain": "aïn",
+#         "centre-ville": "centre ville",
+#         "sidi belyout (centre ville, médina)": ["sidi belyout", "centre ville", "médina"],
+#         "ain diab (corniche)": ["ain diab", "corniche", "aïn diab"],
+#         "roches noires (belvédère)": ["roches noires", "belvédère"],
+#     }
+    
+#     return normalized
 
-    if sub_count == 0:
-        intro_msg = f"ℹ️ I couldn't find any blanes in *{sub_district or district}*, but I did find {district_only_count} in sub-districts of *{district}*."
-    elif sub_count < 3:
-        intro_msg = f"✅ I found {sub_count} blane(s) in *{sub_district or district}*, and {district_only_count} more in sub-districts of *{district}*."
-    else:
-        intro_msg = f"✅ I found {sub_count} blane(s) in *{sub_district or district}*."
 
-    # Fetch and list blane info
-    result_msgs = []
-    for blane_id in total_matches:
-        info = get_blane_info.invoke({"blane_id": blane_id})
-        result_msgs.append(info)
+# district_map = {
+#     "anfa": [
+#         "bourgogne",
+#         "sidi belyout (centre ville, médina)",
+#         "maârif",
+#         "ain diab (corniche)",
+#         "gauthier",
+#         "racine",
+#         "palmier",
+#         "triangle d’or",
+#         "oasis",
+#         "cil"
+#     ],
+#     "hay hassani": [
+#         "hay hassani",
+#         "oulfa",
+#         "errahma",
+#         "lissasfa"
+#     ],
+#     "aïn chock": [
+#         "aïn chock",
+#         "sidi maârouf",
+#         "californie",
+#         "polo"
+#     ],
+#     "aïn sebaâ – hay mohammadi": [
+#         "aïn sebaâ",
+#         "hay mohammadi",
+#         "roches noires (belvédère)"
+#     ],
+#     "al fida – mers sultan": [
+#         "al fida",
+#         "mers sultan",
+#         "derb sultan",
+#         "habous"
+#     ],
+#     "sidi bernoussi – sidi moumen": [
+#         "sidi bernoussi",
+#         "sidi moumen",
+#         "zenata"
+#     ],
+#     "moulay rachid – ben m’sick": [
+#         "moulay rachid",
+#         "sidi othmane",
+#         "ben m’sick",
+#         "sbata"
+#     ],
+#     "surroundings": [
+#         "bouskoura",
+#         "la ville verte",
+#         "dar bouazza",
+#         "mohammedia",
+#         "bouznika"
+#     ]
+# }
 
-    return intro_msg + "\n\n" + "\n\n".join(result_msgs)
+# def _matches_category(name: str, description: str, category: str) -> bool:
+#     if not category:
+#         return True
+#     c = category.strip().lower()
+#     text = f"{name} {description}".lower()
+#     keywords = {
+#   "restaurant": [
+#     "restaurant",
+#     "resto",
+#     "food",
+#     "drinks",
+#     "café",
+#     "brunch",
+#     "goûters",
+#     "déjeunez",
+#     "bazenne",
+#     "cappero",
+#     "pizzeria",
+#     "pizzas",
+#     "cuisines",
+#     "pâte",
+#     "sauce",
+#     "tomate",
+#     "ingrédients",
+#     "gastronomie",
+#     "ambiance",
+#     "gnaoua",
+#     "artisanat",
+#     "créativité"
+#   ],
+#   "spa": [
+#     "spa",
+#     "massage",
+#     "hammam",
+#     "soin",
+#     "lissant",
+#     "cheveux",
+#     "coiffure",
+#     "brushing",
+#     "coupe",
+#     "manucure",
+#     "pédicure",
+#     "visage",
+#     "détente",
+#     "relaxant",
+#     "hydratant",
+#     "réparateur",
+#     "esthétique",
+#     "gommage",
+#     "beauté",
+#     "institut",
+#     "salon",
+#     "fish",
+#     "hydra",
+#     "facial",
+#     "musc",
+#     "taha",
+#     "nashi",
+#     "nelya",
+#     "vernis",
+#     "hydromassage",
+#     "transats",
+#     "pool",
+#     "bar",
+#     "californie",
+#     "triangle",
+#     "mers",
+#     "sultan",
+#     "sidi",
+#     "maârouf",
+#     "palmier",
+#     "casablanca",
+#     "jasmin",
+#     "professionnel",
+#     "linkedin",
+#     "profil",
+#     "shooting",
+#     "moderne",
+#     "crédible"
+#   ],
+#   "activity": [
+#     "activité",
+#     "activities",
+#     "escape",
+#     "paintball",
+#     "fun",
+#     "souvenirs",
+#     "toboggans",
+#     "piscines",
+#     "aquatiques",
+#     "summer",
+#     "camp",
+#     "enfants",
+#     "éducatif",
+#     "plein",
+#     "air",
+#     "accrobranche",
+#     "laser",
+#     "game",
+#     "tubing",
+#     "slide",
+#     "quad",
+#     "aventures",
+#     "jeux",
+#     "eau",
+#     "sportives",
+#     "team",
+#     "building",
+#     "créatives",
+#     "culturelles",
+#     "groupe",
+#     "natation",
+#     "sports",
+#     "équipe",
+#     "robotique",
+#     "lego",
+#     "codage",
+#     "intelligence",
+#     "artificielle",
+#     "projets",
+#     "innovants",
+#     "anglais",
+#     "pays",
+#     "rêves",
+#     "villa",
+#     "eden",
+#     "badr",
+#     "terrain",
+#     "action",
+#     "décor",
+#     "croissance",
+#     "plan",
+#     "mobile",
+#     "application",
+#     "digitaliser",
+#     "client",
+#     "site",
+#     "corporate",
+#     "présentation",
+#     "valeurs",
+#     "moderne"
+#   ]
+# }.get(c, [c])
+#     # keywords = {
+#     #     "restaurant": ["restaurant", "resto", "food", "café", "cafe", "diner", "brunch"],
+#     #     "spa": ["spa", "massage", "hammam", "wellness", "soin"],
+#     #     "activity": ["activity", "activité", "escape", "kart", "cinema", "cinéma", "bowling", "paintball"],
+#     # }.get(c, [c])
+#     return any(k in text for k in keywords)
 
+# @tool("list_blanes_by_location_and_category")
+# def list_blanes_by_location_and_category(
+#     district: str = "",
+#     sub_district: str = "",
+#     category: str = "",
+#     city: str = "",
+#     start: int = 1,
+#     offset: int = 10
+# ) -> str:
+#     """
+#     Retrieve blanes by district/sub_district/category(like restaurant, spa, activity, etc)/city — any combination is allowed.
+#     - If sub-district is provided, prioritize it first, then other sub-districts in the same district.
+#     - Works even if only one filter is given.
+#     - Supports pagination via start/offset (default 1, 10).
+#     """
+#     token = get_token()
+#     if not token:
+#         return "❌ Failed to retrieve token. Please try again later."
+
+#     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+#     params = {
+#         "status": "active",
+#         "sort_by": "created_at",
+#         "sort_order": "desc",
+#         "pagination_size": 200
+#     }
+
+#     try:
+#         response = httpx.get(f"{BASEURLBACK}/blanes", headers=headers, params=params)
+#         response.raise_for_status()
+#         blanes = response.json().get("data", [])
+#     except Exception as e:
+#         return f"❌ Error fetching blanes: {e}"
+
+#     # Normalize inputs
+#     district_lower = district.lower().strip()
+#     sub_district_lower = sub_district.lower().strip()
+#     city_lower = city.lower().strip()
+#     category_lower = category.lower().strip()
+
+#     all_subs_in_district = district_map.get(district_lower, []) if district_lower else []
+#     all_subs_in_district_cleaned = [s.lower() for s in all_subs_in_district]
+
+#     prioritized = []
+#     secondary = []
+
+#     for blane in blanes:
+#         name = blane.get("name", "")
+#         desc = (blane.get("description") or "")
+#         this_city = (blane.get("city") or "").lower().strip()
+
+#         # City filter if provided
+#         if city_lower and city_lower != this_city:
+#             continue
+
+#         # Category filter if provided
+#         if category_lower and not _matches_category(name, desc, category_lower):
+#             continue
+
+#         content_lower = f"{name} {desc}".lower()
+#         in_sub = False
+#         in_district = False
+
+#         if sub_district_lower and sub_district_lower in content_lower:
+#             in_sub = True
+#         elif district_lower:
+#             for sd in all_subs_in_district_cleaned:
+#                 if sd in content_lower:
+#                     in_district = True
+#                     break
+
+#         # Prioritization
+#         if sub_district_lower:
+#             if in_sub:
+#                 prioritized.append(blane)
+#             elif in_district:
+#                 secondary.append(blane)
+#         elif district_lower:
+#             if in_district:
+#                 prioritized.append(blane)
+#         else:
+#             # No location constraint → all matches go here
+#             prioritized.append(blane)
+
+#     ordered = prioritized + [b for b in secondary if b not in prioritized]
+#     total_matches = len(ordered)
+
+#     if total_matches == 0:
+#         return "❌ No blanes found for the given filters."
+
+#     # Pagination normalization and bounds
+#     if start < 1:
+#         start = 1
+#     if offset < 1:
+#         offset = 10
+#     end = min(start - 1 + offset, total_matches)
+#     if start > total_matches:
+#         return f"❌ Start position {start} is beyond available results. Total: {total_matches}"
+
+#     slice_items = ordered[start - 1:end]
+
+#     # Output with header similar to blanes_list
+#     lines = ["Here are some options:"]
+#     lines.append(f"📋 Blanes List (Items {start}-{end} of {total_matches} total)")
+#     lines.append("")
+#     for idx, blane in enumerate(slice_items, start=start):
+#         name = blane.get("name", "Unknown")
+#         price = blane.get("price_current")
+#         id = blane.get('id')
+#         if price:
+#             lines.append(f"{idx} - {name} — {price} Dhs (blane_id: {id})")
+#         else:
+#             lines.append(f"{idx} - {name} (blane_id: {id})")
+
+#     if end < total_matches:
+#         lines.append("\nWant more?\nButtons: [Show 10 more] [See details]")
+#     else:
+#         lines.append("\nThat’s all for these filters. Want me to search with different filters?")
+
+#     return "\n".join(lines)
+
+
+# @tool("handle_filtered_pagination_response")
+# def handle_filtered_pagination_response(
+#     user_sentiment: PaginationSentiment,
+#     district: str = "",
+#     sub_district: str = "",
+#     category: str = "",
+#     city: str = "",
+#     current_start: int = 1,
+#     current_offset: int = 10
+# ) -> str:
+#     """
+#     Handle user response for pagination navigation on filtered results with better error handling.
+#     """
+#     try:
+#         current_start = max(1, int(current_start))
+#         current_offset = max(1, min(25, int(current_offset)))
+#     except (ValueError, TypeError):
+#         return "❌ Invalid pagination parameters. Please try again."
+    
+#     if user_sentiment == PaginationSentiment.POSITIVE:
+#         next_start = current_start + current_offset
+#         return list_blanes_by_location_and_category(
+#             district=district,
+#             sub_district=sub_district,
+#             category=category,
+#             city=city,
+#             start=next_start,
+#             offset=current_offset
+#         )
+#     elif user_sentiment == PaginationSentiment.NEGATIVE:
+#         return "👍 Got it! Would you like to:\n• Change your search filters\n• See details for specific blanes\n• Try a different category or location"
+#     else:
+#         return "❓ Please clarify: say 'yes' or 'more' to see additional results, or 'no' to stop browsing."
+
+# @tool("handle_filtered_pagination_response")
+# def handle_filtered_pagination_response(
+#     user_sentiment: PaginationSentiment,
+#     district: str = "",
+#     sub_district: str = "",
+#     category: str = "",
+#     city: str = "",
+#     current_start: int = 1,
+#     current_offset: int = 10
+# ) -> str:
+#     """
+#     Handle user response for pagination navigation on filtered blane lists.
+
+#     Args:
+#         user_sentiment: PaginationSentiment.POSITIVE or PaginationSentiment.NEGATIVE
+#         district, sub_district, category, city: Same filters used for the list
+#         current_start: Current start position from previous call
+#         current_offset: Current offset from previous call
+
+#     Returns:
+#         Next set of filtered blanes if positive, or appropriate message if negative
+#     """
+#     if user_sentiment == PaginationSentiment.POSITIVE:
+#         next_start = max(1, int(current_start)) + max(1, int(current_offset))
+#         return list_blanes_by_location_and_category(
+#             district=district,
+#             sub_district=sub_district,
+#             category=category,
+#             city=city,
+#             start=next_start,
+#             offset=current_offset
+#         )
+#     elif user_sentiment == PaginationSentiment.NEGATIVE:
+#         return "👍 Okay! Would you like to change filters or see something else?"
+#     else:
+#         return "❓ I didn't understand. Say 'yes' to see more or 'no' to stop."
 
 # @tool("Search_blanes_by_location")
-# def search_blanes_by_location(district: str, sub_district: str = "") -> str:
+# def search_blanes_by_location(district: str = "", sub_district: str = "", category: str = "", city: str = "", start: int = 1, offset: int = 10) -> str:
 #     """
-#     Retrieves blanes based on sub-district first. If fewer than 3 are found,
-#     falls back to district-level matching and informs the user accordingly.
+#     Retrieve blanes by any of the following -> district/sub_district/category/city..
+#     - Prioritize sub-district matches first, then other sub-districts of district.
+#     - Supports pagination via start/offset (default 1, 10).
 #     """
 #     token = get_token()
 #     if not token:
@@ -1219,7 +2041,7 @@ def search_blanes_by_location(district: str, sub_district: str = "") -> str:
 #         "status": "active",
 #         "sort_by": "created_at",
 #         "sort_order": "desc",
-#         "pagination_size": 100
+#         "pagination_size": 200
 #     }
 
 #     try:
@@ -1229,383 +2051,78 @@ def search_blanes_by_location(district: str, sub_district: str = "") -> str:
 #     except Exception as e:
 #         return f"❌ Error fetching blanes: {e}"
 
-#     district_lower = district.lower()
-#     sub_district_lower = sub_district.lower()
+#     district_lower = district.lower().strip()
+#     sub_district_lower = sub_district.lower().strip()
+#     city_lower = city.lower().strip()
 
-#     # Step 1: Filter for sub-district matches
-#     sub_matches = []
+#     # Get all sub-districts in the specified district
+#     all_subs_in_district = district_map.get(district_lower, [])
+#     all_subs_in_district_cleaned = [s.lower() for s in all_subs_in_district]
+
+#     prioritized: list[dict] = []
+#     secondary: list[dict] = []
+
 #     for blane in blanes:
-#         desc = (blane.get("description") or "").lower()
-#         if district_lower in desc and sub_district_lower in desc:
-#             sub_matches.append(blane["id"])
+#         name = blane.get("name", "")
+#         desc = (blane.get("description") or "")
+#         this_city = (blane.get("city") or "").lower().strip()
 
-#     # Step 2: If less than 3, add more from district-level
-#     district_matches = sub_matches.copy()
-#     if len(sub_matches) < 3:
-#         for blane in blanes:
-#             desc = (blane.get("description") or "").lower()
-#             if district_lower in desc and blane["id"] not in district_matches:
-#                 district_matches.append(blane["id"])
+#         if city_lower and city_lower != this_city:
+#             continue
 
-#     # Step 3: Prepare results
-#     if not district_matches:
+#         if not _matches_category(name, desc, category):
+#             continue
+
+#         in_sub = False
+#         in_district = False
+#         content_lower = f"{name} {desc}".lower()
+
+#         if sub_district_lower and sub_district_lower in content_lower:
+#             in_sub = True
+#         else:
+#             for sd in all_subs_in_district_cleaned:
+#                 if sd in content_lower:
+#                     in_district = True
+#                     break
+
+#         if in_sub:
+#             prioritized.append(blane)
+#         elif in_district or not sub_district_lower:
+#             secondary.append(blane)
+
+#     ordered = prioritized + [b for b in secondary if b not in prioritized]
+#     total_matches = len(ordered)
+
+#     if total_matches == 0:
 #         return f"❌ No blanes found in district *{district}* or sub-district *{sub_district}*."
 
-#     # Step 4: Generate summary message
-#     sub_count = len(sub_matches)
-#     district_only_count = len(district_matches) - sub_count
-#     total = len(district_matches)
+#     # Pagination normalization
+#     if start < 1:
+#         start = 1
+#     if offset < 1:
+#         offset = 10
+#     end = min(start - 1 + offset, total_matches)
+#     if start > total_matches:
+#         return f"❌ Start position {start} is beyond available results. Total: {total_matches}"
 
-#     if sub_count == 0:
-#         intro_msg = f"ℹ️ I couldn't find any blanes in *{sub_district}*, but I did find {district_only_count} in *{district}*."
-#     elif sub_count < 3:
-#         intro_msg = f"✅ I found {sub_count} blane(s) in *{sub_district}*, and {district_only_count} more in *{district}*."
-#     else:
-#         intro_msg = f"✅ I found {sub_count} blane(s) in *{sub_district}*."
+#     # Slice
+#     slice_items = ordered[start - 1:end]
 
-#     # Step 5: Fetch and list blane info
-#     result_msgs = []
-#     for blane_id in district_matches:
-#         info = get_blane_info.invoke({"blane_id": blane_id})
-#         result_msgs.append(info)
-
-#     return intro_msg + "\n\n" + "\n\n".join(result_msgs)
-
-
-# @tool("create_reservation")
-# def create_reservation(session_id: str, blane_id: int, name: str, email: str, phone: str, city: str, date: str, end_date: str, time: str, quantity: int, number_persons: int, comments: str = "") -> str:
-#     """
-#     Handles reservation creation for:
-#     - Reservation Blanes (daily and hourly)
-#     - Order Blanes (digital and physical)
-#     """
-#     from datetime import datetime, timedelta
-#     import httpx
-
-#     def parse_datetime(date_str):
-#         for fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%d %H:%M:%S", "%H:%M:%S"):
-#             try:
-#                 return datetime.strptime(date_str, fmt)
-#             except ValueError:
-#                 continue
-#         return None
-
-#     def parse_time_only(time_str):
-#         for fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%H:%M:%S"):
-#             try:
-#                 return datetime.strptime(time_str, fmt).time()
-#             except ValueError:
-#                 continue
-#         return None
-
-#     token = get_token()
-#     if not token:
-#         return "❌ Failed to retrieve token."
-
-#     headers = {
-#         "Authorization": f"Bearer {token}",
-#         "Content-Type": "application/json"
-#     }
-
-#     # Step 1: Get blane info
-#     try:
-#         res = httpx.get(f"{BASEURLBACK}/blanes", headers=headers)
-#         res.raise_for_status()
-#         blane = next((b for b in res.json()["data"] if b["id"] == blane_id), None)
-#         if not blane:
-#             return f"❌ Blane with ID {blane_id} not found."
-#     except Exception as e:
-#         return f"❌ Error fetching blane: {e}"
-
-#     # Step 2: Calculate Total Cost
-#     base_price = float(blane.get("price_current", 0))
-#     total_price = base_price * quantity
-
-#     # Step 3: Add delivery cost if order and physical
-#     if blane["type"] == "order" and not blane.get("is_digital"):
-#         if blane.get("city") != city:
-#             total_price += float(blane.get("livraison_out_city", 0))
+#     # Build output list
+#     lines = ["Here are some options:"]
+#     for idx, blane in enumerate(slice_items, start=start):
+#         name = blane.get("name", "Unknown")
+#         price = blane.get("price_current")
+#         id = blane.get('id')
+#         if price:
+#             lines.append(f"{idx} - {name} — {price} Dhs (blane_id: {id})")
 #         else:
-#             total_price += float(blane.get("livraison_in_city", 0))
+#             lines.append(f"{idx} - {name} (blane_id: {id})")
 
-#     # Step 4: Handle partiel payments
-#     partiel_price = 0
-#     if blane.get("partiel") and blane.get("partiel_field"):
-#         percent = float(blane["partiel_field"])
-#         partiel_price = round((percent / 100) * total_price)
-
-#     english_to_french_days = {
-#         "Monday": "Lundi", "Tuesday": "Mardi", "Wednesday": "Mercredi",
-#         "Thursday": "Jeudi", "Friday": "Vendredi", "Saturday": "Samedi", "Sunday": "Dimanche"
-#     }
-#     current_date = datetime.now().strftime("%Y-%m-%d")
-#     if date < current_date:
-#         return f"❌ Invalid reservation date: {date}. Please choose a future date."
-
-
-#     # Step 5: Validate time/date based on type
-#     if blane["type"] == "reservation":
-#         jours_open = blane.get("jours_creneaux", [])
-#         user_day = datetime.strptime(date, "%Y-%m-%d").strftime("%A")
-#         user_day_fr = english_to_french_days.get(user_day, "")
-
-#         if user_day_fr.capitalize() not in jours_open:
-#             return f"🚫 Blane is closed on {user_day}. Open days: {', '.join(jours_open)}"
-
-#         if blane["type_time"] == "time":
-#             heure_debut = parse_time_only(blane["heure_debut"])
-#             heure_fin = parse_time_only(blane["heure_fin"])
-#             slot_time = datetime.strptime(time, "%H:%M").time()
-
-#             if not heure_debut or not heure_fin:
-#                 return f"❌ Invalid opening/closing time format in blane."
-
-#             interval = int(blane["intervale_reservation"])
-#             current = datetime.combine(datetime.today(), heure_debut)
-#             end = datetime.combine(datetime.today(), heure_fin)
-#             valid_slots = []
-
-#             while current <= end:
-#                 valid_slots.append(current.strftime("%H:%M"))
-#                 current += timedelta(minutes=interval)
-
-#             if time not in valid_slots:
-#                 return f"🕓 Invalid slot. Valid slots: {', '.join(valid_slots)}"
-
-#         else:  # Daily
-#             start = parse_datetime(blane.get("start_date"))
-#             end = parse_datetime(blane.get("expiration_date"))
-#             user_date = datetime.strptime(date, "%Y-%m-%d")
-#             user_end_date = datetime.strptime(end_date, "%Y-%m-%d")
-
-#             if not start or not end:
-#                 return f"❌ Invalid start or expiration date format in blane."
-
-#             if not (start.date() <= user_date.date() <= end.date()):
-#                 return f"❌ Start date must be within {start.date()} to {end.date()}"
-
-#             if not (start.date() <= user_end_date.date() <= end.date()):
-#                 return f"❌ End date must be within {start.date()} to {end.date()}"
-
-#     # Step 6: Build Payload
-
-#     print(blane_id, name, email, phone, city, date, end_date, time, comments, quantity, number_persons, total_price, partiel_price)
-
-#     payload = {
-#         "blane_id": blane_id,
-#         "name": name,
-#         "email": email,
-#         "phone": phone,
-#         "city": city,
-#         "date": date,
-#         "end_date": end_date,
-#         "time": time,
-#         "comments": comments,
-#         "quantity": quantity,
-#         "number_persons": number_persons,
-#         "status": "pending",
-#         "total_price": total_price - partiel_price,
-#         "payment_method": "cash",
-#         "partiel_price": partiel_price
-#     }
-
-#     # Step 7: Send Reservation Request
-#     try:
-#         res = httpx.post(f"{BASEURLBACK}/reservations", headers=headers, json=payload)
-#         res.raise_for_status()
-#         reservation = res.json()
-#         return f"✅ Reservation successful! Reservation Number: {reservation.get('reservation_number')}"
-#     except Exception as e:
-#         return f"❌ Error creating reservation: {str(e)}"
-
-
-
-# @tool("list_reservations")
-# def list_reservations(email: str) -> str:
-#     """
-#     Get the list of the authenticated user's reservations.
-#     Requires user's email.
-#     """
-#     client_id = get_client_id(email)
-#     url = f"{BASEURLFRONT}/reservations"
-#     headers = {
-#         "Content-Type": "application/json"
-#     }
-#     params = {
-#         "include": "blane",
-#         "sort_by": "date",
-#         "sort_order": "asc"
-#     }
-#     payload = {
-#         "email": email
-#     }
-
-#     response = requests.get(url, json=payload, headers=headers, params=params)
-
-#     if response.status_code != 200:
-#         return f"❌ Failed to fetch reservations: {response.text}"
-
-#     data = response.json()["data"]
-#     if not data:
-#         return "📭 You have no reservations at the moment."
-
-#     message = "📋 Your Reservations:\n"
-#     for res in data:
-#         message += f"- Ref: {res['NUM_RES']} | Blane ID: {res['blane_id']} | {res['date']} at {res['time']} ({res['status']})\n"
-
-#     return message.strip()
-
-# @tool("blanes_info")
-# def get_blane_info(blane_id: int):
-#     """
-#     Requires blane_id.
-#     Returns blane info.
-#     """
-#     url = f"{BASEURLFRONT}/blanes"
-
-#     headers = {
-#         "Content-Type": "application/json"
-#     }
-
-#     params = {
-#         "status": "active",
-#         "sort_by": "created_at",
-#         "sort_order": "desc",
-#         "pagination_size": 10  # or any size you want
-#     }
-
-#     try:
-#         response = httpx.get(url, headers=headers, params=params)
-#         response.raise_for_status()
-#         blanes = response.json().get("data", [])
-#         print(blanes)
-
-#         if not blanes:
-#             return "No blanes found."
-
-#         output = []
-#         for i, blane in enumerate(blanes, start=1):
-#             if blane_id == blane['id']:
-#                 return blane
-
-#         return None
-
-#     except httpx.HTTPStatusError as e:
-#         return f"❌ HTTP Error {e.response.status_code}: {e.response.text}"
-#     except Exception as e:
-#         return f"❌ Error fetching blanes: {str(e)}"
-
-# def get_total_price(blane_id: int):
-#     url = f"{BASEURLFRONT}/blanes"
-
-#     headers = {
-#         "Content-Type": "application/json"
-#     }
-
-#     params = {
-#         "status": "active",
-#         "sort_by": "created_at",
-#         "sort_order": "desc",
-#         "pagination_size": 10  # or any size you want
-#     }
-
-#     try:
-#         response = httpx.get(url, headers=headers, params=params)
-#         response.raise_for_status()
-#         blanes = response.json().get("data", [])
-#         print(blanes)
-
-#         if not blanes:
-#             return "No blanes found."
-
-#         output = []
-#         for i, blane in enumerate(blanes, start=1):
-#             if blane_id == blane['id']:
-#                 return blane['price_current']
-
-#         return None
-
-#     except httpx.HTTPStatusError as e:
-#         return f"❌ HTTP Error {e.response.status_code}: {e.response.text}"
-#     except Exception as e:
-#         return f"❌ Error fetching blanes: {str(e)}"
-
-# def set_client_id(session_id: str, client_id: int) -> str:
-#     """
-#     Associates client_id with a session.
-#     """
-#     with SessionLocal() as db:
-#         # Fetch the session
-#         session = db.query(Session).filter(Session.id == session_id).first()
-#         if not session:
-#             return f"Session {session_id} not found."
-
-#         # Set client_email and commit
-#         session.client_id = client_id
-#         db.commit()
-
-#     return f"Set {client_id} for session {session_id}"
-
-# def get_client_id(client_email: str) -> str:
-#     """
-#     gets client_id associated with client_email
-#     """
-#     client_id = None
-#     with SessionLocal() as db:
-#         # Fetch the session
-#         session = db.query(Session).filter(Session.client_email == client_email).first()
-#         if not session:
-#             return f"Email {client_email} not found."
-
-#         # Set client_email and commit
-#         client_id = session.client_id
-
-#     return client_id
-
-
-# @tool("create_reservation")
-# def create_reservation(session_id: str, blane_id: int, name: str, email:str, phone: str, city: str, date: str, end_date: str, time: str, quantity: int, number_persons: int, comments: str = "") -> str:
-#     """
-#     Create a new reservation for a blane.
-#     Requires blane_id, user's name, email, phone, city of booking, date of booking, end_date, time, comments (if any), quantity of blanes to be booked, number of persons, payment_method
-#     """
-#     status: str = "confirmed"
-#     payment_method: str = "cash"
-#     url = f"{BASEURLFRONT}/reservations"
-#     headers = {
-#         "Content-Type": "application/json"
-#     }
-#     total_price = get_total_price(blane_id)
-#     print(total_price)
-#     if total_price is not None:
-#         pass
+#     # Next prompt
+#     if end < total_matches:
+#         lines.append("\nWant more?\nButtons: [Show 10 more] [See details]")
 #     else:
-#         return "Blane not found"
-#     print("hello")
-#     payload = {
-#         "blane_id": blane_id,
-#         "name": name,
-#         "email": email,
-#         "phone": phone,
-#         "city": city,
-#         "date": date,
-#         "end_date": end_date,
-#         "time": time,
-#         "comments": comments,
-#         "quantity": quantity,
-#         "number_persons": number_persons,
-#         "status": status,
-#         "total_price": total_price,
-#         "payment_method": payment_method,
-#         "partiel_price": 0
-#     }
+#         lines.append("\nThat’s all in this district. Want me to suggest blanes in another district?")
 
-#     response = requests.post(url, json=payload, headers=headers)
-
-#     if response.status_code == 201:
-#         data = response.json()["data"]
-#         # set_client_id(session_id, data['customer']['id'])
-#         return f"🎉 Reservation confirmed!\nRef: {data}"
-#         # return f"🎉 Reservation confirmed!\nRef: {data['NUM_RES']}\nDate: {data['date']}\nTime: {data['time']}"
-#     else:
-#         return f"❌ Failed to create reservation: {response.text}"
+#     return "\n".join(lines)
