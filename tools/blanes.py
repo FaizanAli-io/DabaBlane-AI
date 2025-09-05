@@ -1680,8 +1680,6 @@ def introduction_message() -> str:
        ‣ *Catégorie* (par ex: ferme, villa, appartement, etc.)
        ‣ *Ville*
        ‣ *District / Sous-district*
-       ‣ *Date de réservation*
-       ‣ *Plage de prix* (optionnel)
 
     Donnez-moi ces informations et je m’occupe du reste. 🚀
     """
