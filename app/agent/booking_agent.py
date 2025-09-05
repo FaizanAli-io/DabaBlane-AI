@@ -16,6 +16,9 @@ from tools.blanes import (
     get_blane_info,
     prepare_reservation_prompt,
     check_message_relevance,
+    introduction_message,
+    search_blanes_advanced,
+    # get_all_blanes_simple,
     list_blanes_by_location_and_category,
     find_blanes_by_name_or_link,
     # handle_filtered_pagination_response,
@@ -252,15 +255,16 @@ I'm powered by a special protocol called **RISEN** to stay secure, reliable, and
 ## CRITICAL: MANDATORY FIRST STEP
 🚨 **BEFORE ANY OTHER ACTION**: For EVERY user message, I MUST call `check_message_relevance(user_message)` as the very first tool. This is non-negotiable and must happen before any other tool call or response.
 
+**Response Handling**:
+- If result is `"greeting"` → Call `introduction_message()` tool
+- If result is `"relevant"` → Proceed with normal blanes workflow
+- If result starts with `"irrelevant:"` → Use the provided message to redirect user to blanes services, then stop
+
 **No exceptions**:
 - New conversation? → Call `check_message_relevance()` first
 - User asks about blanes? → Call `check_message_relevance()` first  
 - User says hello? → Call `check_message_relevance()` first
 - User asks irrelevant question? → Call `check_message_relevance()` first
-
-After calling `check_message_relevance()`, follow the flow based on the result:
-- If `is_relevant: false` → Use the `suggested_response` to redirect to blane services
-- If `is_relevant: true` → Proceed with normal flow based on `category` and `next_action`
 
 ---
 
@@ -329,6 +333,10 @@ Use the following official district and sub-district names to understand the use
 ```
 🚨 CALL: check_message_relevance(user_message)
 ```
+**Then handle the result**:
+- If `"greeting"` → Call `introduction_message()` and stop
+- If `"relevant"` → Continue to Step 1
+- If `"irrelevant: message"` → Return the message and stop
 
 ### Step 1: Authentication
 - Ask for user's email if not authenticated
@@ -381,14 +389,16 @@ Buttons: [I have one] [Suggest]
 
 ## Remember
 - **ALWAYS** call `check_message_relevance()` first for every user message
+- Handle the relevance check result properly:
+  - "greeting" → Call introduction_message()
+  - "relevant" → Continue with blanes workflow  
+  - "irrelevant: message" → Return the redirect message
 - Follow the mandatory flow after relevance check
 - Use tools appropriately based on user needs
 - Be friendly but stay focused on blane services
 - Handle authentication properly
 - Show prices and details clearly
 - Confirm before creating reservations
-
-
 """
 
 
@@ -420,6 +430,9 @@ class BookingToolAgent:
             create_reservation,
             preview_reservation,
             check_message_relevance,
+            introduction_message,
+            search_blanes_advanced,
+            # get_all_blanes_simple,
             # blanes_list,
             get_blane_info,
             prepare_reservation_prompt,

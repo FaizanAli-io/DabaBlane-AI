@@ -126,6 +126,215 @@ def list_categories() -> str:
         print(f"❌ Error: {str(e)}")
         return {}
 
+
+def get_all_blanes_simple() -> list:
+    """
+    Retrieves ALL blanes from the API and returns them as a simple list of dictionaries.
+    This version is more suitable for programmatic use.
+    
+    Returns:
+        list: List of dictionaries containing blane data, or empty list on error
+    """
+    token = get_token()
+    if not token:
+        return []
+    
+    url = f"{BASEURLBACK}/blanes"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+    
+    all_blanes = []
+    current_page = 1
+    
+    try:
+        while True:
+            params = {
+                "status": "active",
+                "sort_by": "created_at",
+                "sort_order": "desc",
+                "per_page": 10,
+                "page": current_page
+            }
+            
+            response = httpx.get(url, headers=headers, params=params)
+            response.raise_for_status()
+            data = response.json()
+            
+            page_blanes = data.get('data', [])
+            meta = data.get('meta', {})
+            total_blanes = meta.get('total', 0)
+            
+            if not page_blanes:
+                break
+            
+            all_blanes.extend(page_blanes)
+            current_page += 1
+            
+            if len(all_blanes) >= total_blanes:
+                break
+            
+            if current_page > 1000:  # Safety limit
+                break
+                
+    except Exception as e:
+        print(f"Error fetching all blanes: {str(e)}")
+        return []
+    
+    return all_blanes
+
+@tool("search_blanes_advanced")
+def search_blanes_advanced(session_id: str, keywords: str, min_relevance: float = 0.5) -> str:
+    """
+        An AI-powered semantic search tool that finds relevant "blanes" (services/providers) based on user keywords and intent, with configurable relevance scoring.
+        When to Use This Tool
+        Call this tool when users ask queries similar to:
+        Service Discovery Queries
+
+        "Show me blanes related to photoshoot" (keyword: photoshoot)
+        "I need photographers for my wedding" (keyword: wedding photography)
+        "Find me spa services" (keyword: spa)
+        "Looking for catering options" (keyword: catering)
+
+        Business/Project Needs
+
+        "I want to create a website, suggest me something?" (keyword: website creation)
+        "Help me find marketing services" (keyword: marketing)
+        "I need event planning assistance" (keyword: event planning)
+        "Looking for graphic design services" (keyword: graphic design)
+
+        General Service Exploration
+
+        "What blanes do you have for restaurants?" (keyword: restaurants)
+        "Show me fitness-related services" (keyword: fitness)
+        "Find me beauty and wellness providers" (keyword: beauty wellness)
+        "I need home improvement services" (keyword: home improvement)
+
+        Key Features
+
+        AI-Powered Matching: Uses GPT-4o-mini for semantic understanding
+        Relevance Scoring: Configurable minimum relevance threshold (0.0-1.0)
+        Multi-Criteria Analysis: Considers direct matches, semantic similarity, and contextual relevance
+        Detailed Explanations: Provides reasoning for each match
+
+        Input Parameters
+
+        session_id: Unique identifier for the search session
+        keywords: The search terms or user intent (extracted from user query)
+        min_relevance: Optional threshold (default 0.5) - higher values return fewer, more precise results
+
+        Scoring System
+
+        0.9-1.0: Perfect match, exactly what user wants
+        0.7-0.8: Very relevant, strong semantic connection
+        0.5-0.6: Moderately relevant, related services
+        0.3-0.4: Weakly related, might be useful
+        Below 0.3: Not relevant (filtered out)
+    """
+    from langchain_openai import ChatOpenAI
+    import json
+    
+    if not 0.0 <= min_relevance <= 1.0:
+        min_relevance = 0.5
+    
+    # Get all blanes
+    all_blanes_data = get_all_blanes_simple()
+    if not all_blanes_data:
+        return "❌ Failed to retrieve blanes data"
+    
+    # Prepare data for AI analysis
+    blanes_info = []
+    for blane in all_blanes_data:
+        blane_entry = {
+            "id": blane.get('id', 'Unknown'),
+            "title": blane.get('name', 'Unknown'),
+            "description": blane.get('description', ''),
+            "category": blane.get('category', ''),
+            "type": blane.get('type', '')
+        }
+        blanes_info.append(blane_entry)
+    
+    try:
+        # Initialize OpenAI model (same as BookingToolAgent)
+        llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+        
+        # Create advanced AI prompt
+        ai_prompt = f"""You are an expert at semantic matching of services with user search intent.
+
+                        TASK: Find blanes highly relevant to: "{keywords}" with minimum relevance of {min_relevance}
+
+                        BLANES DATA:
+                        {json.dumps(blanes_info, indent=2)}
+
+                        ANALYSIS CRITERIA:
+                        1. Direct keyword matches in title/description (high score)
+                        2. Semantic similarity and related concepts (medium score)
+                        3. Contextual relevance (e.g., wedding → photography, catering)
+                        4. Industry connections and complementary services
+
+                        SCORING GUIDE:
+                        - 0.9-1.0: Perfect match, exactly what user wants
+                        - 0.7-0.8: Very relevant, strong semantic connection
+                        - 0.5-0.6: Moderately relevant, related services
+                        - 0.3-0.4: Weakly related, might be useful
+                        - Below 0.3: Not relevant
+
+                        Return ONLY JSON array with scores >= {min_relevance}:
+                        [
+                            {{"id": "blane_id", "title": "blane_title", "relevance_score": 0.85, "reason": "detailed explanation"}}
+                        ]
+
+                        If no matches meet the threshold, return []"""
+
+        # Get AI response
+        response = llm.invoke(ai_prompt)
+        ai_content = response.content.strip()
+        
+        # Parse JSON response
+        try:
+            if ai_content.startswith('```json'):
+                ai_content = ai_content.replace('```json', '').replace('```', '').strip()
+            elif ai_content.startswith('```'):
+                ai_content = ai_content.replace('```', '').strip()
+            
+            relevant_blanes = json.loads(ai_content)
+            
+            if not isinstance(relevant_blanes, list):
+                raise ValueError("AI response is not a list")
+                
+        except (json.JSONDecodeError, ValueError) as e:
+            # Fallback to rule-based matching
+            print(f"AI parsing failed: {e}, using fallback")
+            # relevant_blanes = analyze_blanes_with_ai("", keywords, blanes_info)
+            # relevant_blanes = [b for b in relevant_blanes if b.get('relevance_score', 0) >= min_relevance]
+        
+        if not relevant_blanes:
+            return f"❌ No blanes found with relevance >= {min_relevance} for keywords: '{keywords}'"
+        
+        # Format output
+        output = [f"🎯 Advanced Search Results (Session: {session_id})"]
+        output.append(f"Keywords: '{keywords}' | Min Relevance: {min_relevance}")
+        output.append(f"Found {len(relevant_blanes)} highly relevant blanes:")
+        output.append("")
+        
+        for i, blane in enumerate(relevant_blanes, 1):
+            score = blane.get('relevance_score', 0)
+            reason = blane.get('reason', 'Meets relevance criteria')
+            
+            score_emoji = "🎯" if score >= 0.9 else "🔥" if score >= 0.8 else "✨" if score >= 0.7 else "💫"
+            
+            output.append(f"{i}. {score_emoji} {blane['title']} (ID: {blane['id']})")
+            # output.append(f"   📊 Score: {score:.2f}/1.0")
+            output.append(f"   💡 {reason}")
+            output.append("")
+        
+        return "\n".join(output)
+        
+    except Exception as e:
+        return f"❌ Error in advanced search: {str(e)}"
+
+
 @tool("list_blanes")
 def blanes_list(start: int = 1, offset: int = 10) -> str:
     """
@@ -625,7 +834,7 @@ def create_reservation(
     comments: str = "N/A"
 ) -> str:
     """
-    Handles reservation or order creation. Must run `before_create_reservation` first.
+    Handles reservation or order creation.
     """
     from datetime import datetime, timedelta
     import httpx
@@ -821,6 +1030,8 @@ def create_reservation(
     except Exception as e:
         return f"❌ Error submitting reservation: {str(e)}"
 
+
+    
 
 @tool("preview_reservation")
 def preview_reservation(
@@ -1189,36 +1400,66 @@ def _normalize_location_text(text: str) -> str:
     
     return normalized
 
+@tool("introduction_message")
+def introduction_message() -> str:
+    """
+    Returns the introduction message for DabaBlane AI booking assistant.
+    
+    Use this tool when:
+    - User sends greeting messages like "hello", "hi", "salam", "assalam o alaikum"
+    - User asks "what can you do" or "help me"
+    - User starts a new conversation
+    - User asks about the bot's capabilities or services
+    - User sends any initial greeting or inquiry about services
+    
+    The tool provides a comprehensive introduction explaining:
+    - Bot identity as DabaBlane AI booking assistant
+    - Available services (finding blanes, checking availability, making reservations)
+    - Required information needed from users (category, city, district, sub-district, date)
+    - Friendly greeting response in local language (French/Roman)
+    
+    Also use this when user says "salam" in any form - respond with "Walikum Assalam" instead of Hello.
+
+    """
+    message = """
+    Bonjour! Je suis *DabaBlane AI*, votre assistant de réservation intelligent. 🤖✨
+
+    Je peux vous aider à :
+    ‣   🔍 Trouver des *blanes* (selon catégorie, ville, district et sous-district)
+    ‣   📅 Vérifier la disponibilité
+    ‣   🛎️ Réserver un blane pour vous
+    ‣   💸 Vous guider dans le processus de paiement et de réservation
+
+    Pour vous montrer les meilleures options, j’aurai besoin de quelques détails :
+       ‣ *Catégorie* (par ex: ferme, villa, appartement, etc.)
+       ‣ *Ville*
+       ‣ *District / Sous-district*
+       ‣ *Date de réservation*
+       ‣ *Plage de prix* (optionnel)
+
+    Donnez-moi ces informations et je m’occupe du reste. 🚀
+    """
+    return message
 
 
 @tool("check_message_relevance")
-def check_message_relevance(user_message: str) -> dict:
+def check_message_relevance(user_message: str) -> str:
     """
     MANDATORY FIRST TOOL: Check if user message is relevant to blanes/dabablane business.
     This tool MUST be called before any other tool for every user interaction.
+    For greeting messages like hi, hey, hello, bonjour, call `introduction_message` instead.
     
     Args:
         user_message: User's input message
     
     Returns:
-        {
-            "is_relevant": bool,
-            "category": "booking|greeting|question_about_blanes|search_blanes|irrelevant|creator_question",
-            "confidence": float,
-            "suggested_response": str,
-            "next_action": str
-        }
+        "relevant" if message is about blanes/booking/reservations
+        "greeting" if it's a greeting message
+        "irrelevant" with redirect message if not related to blanes
     """
-    import re
     
     if not user_message or not user_message.strip():
-        return {
-            "is_relevant": False,
-            "category": "irrelevant",
-            "confidence": 0.0,
-            "suggested_response": "Please provide a valid message.",
-            "next_action": "ask_for_input"
-        }
+        return "irrelevant: Please provide a valid message about blanes or reservations."
     
     message_lower = user_message.lower().strip()
     
@@ -1229,7 +1470,8 @@ def check_message_relevance(user_message: str) -> dict:
         "eat", "dine", "activities", "entertainment", "wellness", "relax",
         "casablanca", "morocco", "maroc", "price", "cost", "available",
         "time slot", "appointment", "order", "delivery", "table",
-        "treatment", "service", "deal", "offer", "discount"
+        "treatment", "service", "deal", "offer", "discount", "photo shoot",
+        "photography", "studio", "event", "venue", "location"
     ]
     
     # Location keywords
@@ -1254,102 +1496,181 @@ def check_message_relevance(user_message: str) -> dict:
         "recipe", "cooking tutorial", "travel outside morocco"
     ]
     
-    # Question about platform/creator
-    creator_keywords = [
-        "who created you", "who made you", "your creator", "your developer",
-        "how were you built", "what technology", "ai model", "chatbot",
-        "artificial intelligence"
-    ]
-    
     # Calculate relevance scores
     blane_score = sum(1 for keyword in blane_keywords if keyword in message_lower)
     location_score = sum(1 for keyword in location_keywords if keyword in message_lower)
     greeting_score = sum(1 for keyword in greeting_keywords if keyword in message_lower)
     irrelevant_score = sum(1 for keyword in irrelevant_keywords if keyword in message_lower)
-    creator_score = sum(1 for keyword in creator_keywords if keyword in message_lower)
     
     # Determine category and relevance
     total_positive = blane_score + location_score + greeting_score
     
     if irrelevant_score > 0 and total_positive == 0:
-        return {
-            "is_relevant": False,
-            "category": "irrelevant",
-            "confidence": 0.9,
-            "suggested_response": "I'm Dabablane AI, specialized in helping with blane reservations, bookings, and finding activities, restaurants, and spa services in Casablanca. How can I help you with that?",
-            "next_action": "redirect_to_blanes"
-        }
-    
-    if creator_score > 0:
-        return {
-            "is_relevant": True,  # Still relevant as it's about the platform
-            "category": "creator_question",
-            "confidence": 0.8,
-            "suggested_response": "I'm Dabablane AI, created to help you with blane reservations and bookings. Let's focus on finding you some great deals! What are you interested in?",
-            "next_action": "brief_answer_then_redirect"
-        }
+        return "irrelevant: I'm Dabablane AI, specialized in helping with blane reservations, bookings, and finding activities, restaurants, and spa services in Casablanca. How can I help you with that?"
     
     if greeting_score > 0:
-        return {
-            "is_relevant": True,
-            "category": "greeting",
-            "confidence": 0.9,
-            "suggested_response": "Hello! I'm Dabablane AI, your assistant for blane bookings and reservations.",
-            "next_action": "brief_answer_then_redirect"
-        }
+        return "greeting"
     
-    if blane_score > 2 or (blane_score > 0 and location_score > 0):
-        # High confidence blane-related
-        if any(word in message_lower for word in ["book", "reserve", "reservation", "booking"]):
-            category = "booking"
-        else:
-            category = "search_blanes"
-        
-        return {
-            "is_relevant": True,
-            "category": category,
-            "confidence": 0.9,
-            "suggested_response": "Great! I can help you with that.",
-            "next_action": "proceed_with_authentication"
-        }
-    
-    if total_positive > 0:
-        return {
-            "is_relevant": True,
-            "category": "question_about_blanes",
-            "confidence": 0.7,
-            "suggested_response": "I can help you with blane-related questions.",
-            "next_action": "proceed_with_authentication"
-        }
+    if blane_score > 0 or location_score > 0 or total_positive > 0:
+        return "relevant"
     
     # Try to find any possible connection to blanes
     possible_blane_connection = any([
-        "suggest" in message_lower and "website" in message_lower,  # website creation blane?
-        "learn" in message_lower and any(skill in message_lower for skill in ["skill", "course", "training"]),
-        "service" in message_lower,
-        "experience" in message_lower,
+        "suggest" in message_lower,
         "looking for" in message_lower,
-        "want" in message_lower and "something" in message_lower,
-        "help" in message_lower and ("me" in message_lower or "with" in message_lower)
+        "want" in message_lower,
+        "help" in message_lower,
+        "show me" in message_lower,
+        "find" in message_lower,
+        "search" in message_lower
     ])
     
     if possible_blane_connection:
-        return {
-            "is_relevant": True,
-            "category": "question_about_blanes",
-            "confidence": 0.6,
-            "suggested_response": "Are you looking for a blane related to that? I can help you find activities, services, or experiences.",
-            "next_action": "clarify_then_proceed"
-        }
+        return "relevant"
     
     # Default to irrelevant
-    return {
-        "is_relevant": False,
-        "category": "irrelevant",
-        "confidence": 0.8,
-        "suggested_response": "I'm Dabablane AI, specialized in blane reservations and bookings. I can help you find restaurants, spas, activities, and more in Casablanca. What interests you?",
-        "next_action": "redirect_to_blanes"
-    }
+    return "irrelevant: I'm Dabablane AI, specialized in blane reservations and bookings. I can help you find restaurants, spas, activities, and more in Casablanca. What interests you?"
+    # import re
+    
+    # if not user_message or not user_message.strip():
+    #     return {
+    #         "is_relevant": False,
+    #         "category": "irrelevant",
+    #         "confidence": 0.0,
+    #         "suggested_response": "Please provide a valid message.",
+    #         "next_action": "ask_for_input"
+    #     }
+    
+    # message_lower = user_message.lower().strip()
+    
+    # # Blane/business related keywords
+    # blane_keywords = [
+    #     "blane", "blanes", "dabablane", "reservation", "booking", "book", 
+    #     "reserve", "restaurant", "spa", "activity", "massage", "food", 
+    #     "eat", "dine", "activities", "entertainment", "wellness", "relax",
+    #     "casablanca", "morocco", "maroc", "price", "cost", "available",
+    #     "time slot", "appointment", "order", "delivery", "table",
+    #     "treatment", "service", "deal", "offer", "discount"
+    # ]
+    
+    # # Location keywords
+    # location_keywords = [
+    #     "anfa", "hay hassani", "ain chock", "mers sultan", "sidi bernoussi",
+    #     "moulay rachid", "casablanca", "morocco", "maroc", "near me",
+    #     "my area", "district", "neighbourhood", "location", "where",
+    #     "corniche", "centre ville", "medina", "maârif", "gauthier"
+    # ]
+    
+    # # Greeting keywords
+    # greeting_keywords = [
+    #     "hello", "hi", "hey", "bonjour", "salut", "salam", "good morning",
+    #     "good afternoon", "good evening", "how are you", "start", "begin"
+    # ]
+    
+    # # Irrelevant keywords (clearly off-topic)
+    # irrelevant_keywords = [
+    #     "weather", "politics", "news", "stock market", "crypto", "bitcoin",
+    #     "programming", "code", "technical support", "computer", "software",
+    #     "medicine", "health advice", "legal advice", "homework", "study",
+    #     "recipe", "cooking tutorial", "travel outside morocco"
+    # ]
+    
+    # # Question about platform/creator
+    # creator_keywords = [
+    #     "who created you", "who made you", "your creator", "your developer",
+    #     "how were you built", "what technology", "ai model", "chatbot",
+    #     "artificial intelligence"
+    # ]
+    
+    # # Calculate relevance scores
+    # blane_score = sum(1 for keyword in blane_keywords if keyword in message_lower)
+    # location_score = sum(1 for keyword in location_keywords if keyword in message_lower)
+    # greeting_score = sum(1 for keyword in greeting_keywords if keyword in message_lower)
+    # irrelevant_score = sum(1 for keyword in irrelevant_keywords if keyword in message_lower)
+    # creator_score = sum(1 for keyword in creator_keywords if keyword in message_lower)
+    
+    # # Determine category and relevance
+    # total_positive = blane_score + location_score + greeting_score
+    
+    # if irrelevant_score > 0 and total_positive == 0:
+    #     return {
+    #         "is_relevant": False,
+    #         "category": "irrelevant",
+    #         "confidence": 0.9,
+    #         "suggested_response": "I'm Dabablane AI, specialized in helping with blane reservations, bookings, and finding activities, restaurants, and spa services in Casablanca. How can I help you with that?",
+    #         "next_action": "redirect_to_blanes"
+    #     }
+    
+    # if creator_score > 0:
+    #     return {
+    #         "is_relevant": True,  # Still relevant as it's about the platform
+    #         "category": "creator_question",
+    #         "confidence": 0.8,
+    #         "suggested_response": "I'm Dabablane AI, created to help you with blane reservations and bookings. Let's focus on finding you some great deals! What are you interested in?",
+    #         "next_action": "brief_answer_then_redirect"
+    #     }
+    
+    # if greeting_score > 0:
+    #     return {
+    #         "is_relevant": True,
+    #         "category": "greeting",
+    #         "confidence": 0.9,
+    #         "suggested_response": "Hello! I'm Dabablane AI, your assistant for blane bookings and reservations.",
+    #         "next_action": "brief_answer_then_redirect"
+    #     }
+    
+    # if blane_score > 2 or (blane_score > 0 and location_score > 0):
+    #     # High confidence blane-related
+    #     if any(word in message_lower for word in ["book", "reserve", "reservation", "booking"]):
+    #         category = "booking"
+    #     else:
+    #         category = "search_blanes"
+        
+    #     return {
+    #         "is_relevant": True,
+    #         "category": category,
+    #         "confidence": 0.9,
+    #         "suggested_response": "Great! I can help you with that.",
+    #         "next_action": "proceed_with_authentication"
+    #     }
+    
+    # if total_positive > 0:
+    #     return {
+    #         "is_relevant": True,
+    #         "category": "question_about_blanes",
+    #         "confidence": 0.7,
+    #         "suggested_response": "I can help you with blane-related questions.",
+    #         "next_action": "proceed_with_authentication"
+    #     }
+    
+    # # Try to find any possible connection to blanes
+    # possible_blane_connection = any([
+    #     "suggest" in message_lower and "website" in message_lower,  # website creation blane?
+    #     "learn" in message_lower and any(skill in message_lower for skill in ["skill", "course", "training"]),
+    #     "service" in message_lower,
+    #     "experience" in message_lower,
+    #     "looking for" in message_lower,
+    #     "want" in message_lower and "something" in message_lower,
+    #     "help" in message_lower and ("me" in message_lower or "with" in message_lower)
+    # ])
+    
+    # if possible_blane_connection:
+    #     return {
+    #         "is_relevant": True,
+    #         "category": "question_about_blanes",
+    #         "confidence": 0.6,
+    #         "suggested_response": "Are you looking for a blane related to that? I can help you find activities, services, or experiences.",
+    #         "next_action": "clarify_then_proceed"
+    #     }
+    
+    # # Default to irrelevant
+    # return {
+    #     "is_relevant": False,
+    #     "category": "irrelevant",
+    #     "confidence": 0.8,
+    #     "suggested_response": "I'm Dabablane AI, specialized in blane reservations and bookings. I can help you find restaurants, spas, activities, and more in Casablanca. What interests you?",
+    #     "next_action": "redirect_to_blanes"
+    # }
 
 @tool("list_districts_and_subdistricts")
 def list_districts_and_subdistricts() -> str:
