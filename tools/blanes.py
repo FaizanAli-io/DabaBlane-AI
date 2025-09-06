@@ -336,7 +336,7 @@ def search_blanes_advanced(session_id: str, keywords: str, min_relevance: float 
 
 
 @tool("list_blanes")
-def blanes_list(start: int = 1, offset: int = 10) -> str:
+def list_blanes(start: int = 1, offset: int = 10) -> str:
     """
     Lists all Blanes without any constraints.
     If you have any constraints like category(like restaurant, spa, activity, etc), city, district, sub-district, etc. you can use the tool list_blanes_by_location_and_category to get the blanes.
