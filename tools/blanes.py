@@ -1921,6 +1921,41 @@ def list_districts_and_subdistricts() -> str:
     """Lists all districts and sub districts."""
     return district_map
 
+def list_categories_func() -> str:
+    """
+    Get all available categories with their IDs and names.
+    
+    Returns:
+        dict: Dictionary mapping category IDs to category names
+    """
+    token = get_token()
+    if not token:
+        return "❌ Failed to retrieve token. Please try again later."
+    
+    url = f"{BASEURLBACK}/categories"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+    
+    try:
+        response = httpx.get(url, headers=headers)
+        response.raise_for_status()
+        data = response.json()
+
+        categories = data.get("data", [])
+        result = {cat["id"]: cat["name"] for cat in categories}
+
+        return result
+
+    except httpx.HTTPStatusError as e:
+        print(f"❌ HTTP Error {e.response.status_code}: {e.response.text}")
+        return {}
+    except Exception as e:
+        print(f"❌ Error: {str(e)}")
+        return {}
+
+
 @tool("list_blanes_by_location_and_category")
 def list_blanes_by_location_and_category(
     district: str = "",
@@ -1936,7 +1971,7 @@ def list_blanes_by_location_and_category(
     Args:
         district: District name
         sub_district: Sub-district name  
-        category: Category (restaurant, spa, activity, etc.)
+        category: Category name (restaurant, spa, activity, etc.)
         city: City name
         start: Starting position (default: 1)
         offset: Number of items to show (default: 10, max: 25)
@@ -1951,35 +1986,95 @@ def list_blanes_by_location_and_category(
 
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     
-    # Use larger pagination size to get more comprehensive results for filtering
-    params = {
-        "status": "active",
-        "sort_by": "created_at",
-        "sort_order": "desc",
-        "pagination_size": 500  # Increased for better filtering
-    }
-
-    try:
-        response = httpx.get(f"{BASEURLBACK}/blanes", headers=headers, params=params)
-        response.raise_for_status()
-        all_blanes = response.json().get("data", [])
-    except Exception as e:
-        return f"❌ Error fetching blanes: {str(e)}"
-
-    for blane in all_blanes:
-        print(blane["id"])
     # Normalize input filters
     district_norm = _normalize_location_text(district)
     sub_district_norm = _normalize_location_text(sub_district)
     city_norm = _normalize_location_text(city)
     category_norm = category.lower().strip() if category else ""
+    
+    # Get category ID if category is specified
+    category_id = None
+    if category_norm:
+        try:
+            categories = list_categories_func()
+            if isinstance(categories, dict):
+                # Find category ID by matching category name (case-insensitive)
+                for cat_id, cat_name in categories.items():
+                    if cat_name.lower().strip() == category_norm:
+                        category_id = cat_id
+                        break
+                
+                # If exact match not found, try partial matching
+                if not category_id:
+                    for cat_id, cat_name in categories.items():
+                        if category_norm in cat_name.lower() or cat_name.lower() in category_norm:
+                            category_id = cat_id
+                            break
+                
+                if not category_id:
+                    available_categories = list(categories.values())
+                    return f"❌ Category '{category}' not found. Available categories: {', '.join(available_categories)}"
+        except Exception as e:
+            return f"❌ Error fetching categories: {str(e)}"
+
+    try:
+        all_blanes = []
+        
+        # Use category-specific endpoint if category is specified
+        if category_id:
+            # Calculate pagination for API call
+            api_page = ((start - 1) // 100) + 1
+            
+            params = {
+                "paginationSize": 100,
+                "page": api_page,
+                "sort_order": "asc",
+                "category_id": category_id
+            }
+            
+            response = httpx.get(f"{BASEURLBACK}/getBlanesByCategory", headers=headers, params=params)
+            response.raise_for_status()
+            category_blanes = response.json().get("data", [])
+            
+            # If we need more results, fetch additional pages
+            total_needed = start + offset - 1
+            current_page = api_page
+            while len(category_blanes) < total_needed:
+                current_page += 1
+                params["page"] = current_page
+                response = httpx.get(f"{BASEURLBACK}/getBlanesByCategory", headers=headers, params=params)
+                response.raise_for_status()
+                next_batch = response.json().get("data", [])
+                if not next_batch:  # No more results
+                    break
+                category_blanes.extend(next_batch)
+            
+            all_blanes = category_blanes
+        else:
+            # Use general endpoint for non-category searches
+            params = {
+                "status": "active",
+                "sort_by": "created_at",
+                "sort_order": "desc",
+                "pagination_size": 500
+            }
+            response = httpx.get(f"{BASEURLBACK}/blanes", headers=headers, params=params)
+            response.raise_for_status()
+            all_blanes = response.json().get("data", [])
+
+    except Exception as e:
+        return f"❌ Error fetching blanes: {str(e)}"
+
+    # Debug output (remove in production)
+    for blane in all_blanes[:5]:  # Just show first 5 for debugging
+        print(f"Debug - Blane ID: {blane.get('id')}")
 
     # Get all sub-districts for the specified district
     district_subs = []
     if district_norm:
         district_subs = [_normalize_location_text(sub) for sub in district_map.get(district_norm, [])]
 
-    # Filter blanes based on criteria
+    # Filter blanes based on location criteria (category already filtered by API)
     matched_blanes = []
     
     for blane in all_blanes:
@@ -1990,13 +2085,12 @@ def list_blanes_by_location_and_category(
         # Create searchable text
         searchable_text = _normalize_location_text(f"{name} {description}")
         
-        # Apply filters
+        # Apply city filter
         passes_city_filter = not city_norm or city_norm in blane_city
-        passes_category_filter = not category_norm or _matches_category(name, description, category_norm)
         
-        # Location filtering logic
+        # Apply location filter (district/sub-district)
         passes_location_filter = True
-        location_score = 0  # For prioritization
+        location_score = 0
         
         if sub_district_norm or district_norm:
             passes_location_filter = False
@@ -2013,8 +2107,8 @@ def list_blanes_by_location_and_category(
                         location_score = 2 if sub == sub_district_norm else 1
                         break
         
-        # Only include blanes that pass all filters
-        if passes_city_filter and passes_category_filter and passes_location_filter:
+        # Include blanes that pass all remaining filters
+        if passes_city_filter and passes_location_filter:
             blane['_location_score'] = location_score
             matched_blanes.append(blane)
     
@@ -2086,6 +2180,175 @@ def list_blanes_by_location_and_category(
         output_lines.append("Want to try different search criteria or see details?")
 
     return "\n".join(output_lines)
+
+
+
+
+# @tool("list_blanes_by_location_and_category")
+# def list_blanes_by_location_and_category(
+#     district: str = "",
+#     sub_district: str = "",
+#     category: str = "",
+#     city: str = "",
+#     start: int = 1,
+#     offset: int = 10
+# ) -> str:
+#     """
+#     Retrieve blanes by location and/or category with improved filtering logic.
+    
+#     Args:
+#         district: District name
+#         sub_district: Sub-district name  
+#         category: Category (restaurant, spa, activity, etc.)
+#         city: City name
+#         start: Starting position (default: 1)
+#         offset: Number of items to show (default: 10, max: 25)
+#     """
+#     # Validate and normalize parameters
+#     start = max(1, int(start))
+#     offset = max(1, min(25, int(offset)))
+    
+#     token = get_token()
+#     if not token:
+#         return "❌ Failed to retrieve token. Please try again later."
+
+#     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    
+#     # Use larger pagination size to get more comprehensive results for filtering
+#     params = {
+#         "status": "active",
+#         "sort_by": "created_at",
+#         "sort_order": "desc",
+#         "pagination_size": 500  # Increased for better filtering
+#     }
+
+#     try:
+#         response = httpx.get(f"{BASEURLBACK}/getBlanesByCategory?", headers=headers, params=params)
+#         response.raise_for_status()
+#         all_blanes = response.json().get("data", [])
+#     except Exception as e:
+#         return f"❌ Error fetching blanes: {str(e)}"
+
+#     for blane in all_blanes:
+#         print(blane["id"])
+#     # Normalize input filters
+#     district_norm = _normalize_location_text(district)
+#     sub_district_norm = _normalize_location_text(sub_district)
+#     city_norm = _normalize_location_text(city)
+#     category_norm = category.lower().strip() if category else ""
+
+#     # Get all sub-districts for the specified district
+#     district_subs = []
+#     if district_norm:
+#         district_subs = [_normalize_location_text(sub) for sub in district_map.get(district_norm, [])]
+
+#     # Filter blanes based on criteria
+#     matched_blanes = []
+    
+#     for blane in all_blanes:
+#         name = blane.get("name", "")
+#         description = blane.get("description") or ""
+#         blane_city = _normalize_location_text(blane.get("city", ""))
+        
+#         # Create searchable text
+#         searchable_text = _normalize_location_text(f"{name} {description}")
+        
+#         # Apply filters
+#         passes_city_filter = not city_norm or city_norm in blane_city
+#         passes_category_filter = not category_norm or _matches_category(name, description, category_norm)
+        
+#         # Location filtering logic
+#         passes_location_filter = True
+#         location_score = 0  # For prioritization
+        
+#         if sub_district_norm or district_norm:
+#             passes_location_filter = False
+            
+#             # Check for sub-district match (highest priority)
+#             if sub_district_norm and sub_district_norm in searchable_text:
+#                 passes_location_filter = True
+#                 location_score = 3
+#             # Check for other sub-districts in the same district (medium priority)
+#             elif district_norm:
+#                 for sub in district_subs:
+#                     if sub and sub in searchable_text:
+#                         passes_location_filter = True
+#                         location_score = 2 if sub == sub_district_norm else 1
+#                         break
+        
+#         # Only include blanes that pass all filters
+#         if passes_city_filter and passes_category_filter and passes_location_filter:
+#             blane['_location_score'] = location_score
+#             matched_blanes.append(blane)
+    
+#     # Sort by location score (prioritize exact sub-district matches)
+#     matched_blanes.sort(key=lambda x: x.get('_location_score', 0), reverse=True)
+    
+#     total_matches = len(matched_blanes)
+    
+#     if total_matches == 0:
+#         filter_description = []
+#         if city_norm:
+#             filter_description.append(f"city: {city}")
+#         if district_norm:
+#             filter_description.append(f"district: {district}")
+#         if sub_district_norm:
+#             filter_description.append(f"sub-district: {sub_district}")
+#         if category_norm:
+#             filter_description.append(f"category: {category}")
+        
+#         filters_text = ", ".join(filter_description) if filter_description else "the given filters"
+#         return f"❌ No blanes found for {filters_text}. Try different search criteria."
+
+#     # Apply pagination
+#     end_pos = min(start + offset - 1, total_matches)
+#     if start > total_matches:
+#         return f"❌ Start position {start} exceeds total results ({total_matches}). Try a lower start position."
+
+#     paginated_blanes = matched_blanes[start - 1:end_pos]
+
+#     # Build output
+#     output_lines = ["Here are some options:"]
+    
+#     # Add filter summary
+#     active_filters = []
+#     if city_norm:
+#         active_filters.append(f"City: {city}")
+#     if district_norm:
+#         active_filters.append(f"District: {district}")
+#     if sub_district_norm:
+#         active_filters.append(f"Sub-district: {sub_district}")
+#     if category_norm:
+#         active_filters.append(f"Category: {category}")
+    
+#     filter_summary = " | ".join(active_filters) if active_filters else "All locations"
+#     output_lines.append(f"📋 Filtered Results: {filter_summary}")
+#     output_lines.append(f"📊 Showing items {start}-{end_pos} of {total_matches} matches")
+#     output_lines.append("")
+    
+#     # Add blanes
+#     for idx, blane in enumerate(paginated_blanes, start=start):
+#         name = blane.get("name", "Unknown")
+#         price = blane.get("price_current")
+#         blane_id = blane.get('id')
+        
+#         if price:
+#             output_lines.append(f"{idx}. {name} — {price} Dhs (blane_id: {blane_id})")
+#         else:
+#             output_lines.append(f"{idx}. {name} (blane_id: {blane_id})")
+
+#     # Add pagination info
+#     output_lines.append("")
+#     if end_pos < total_matches:
+#         next_start = end_pos + 1
+#         max_next_end = min(next_start + offset - 1, total_matches)
+#         output_lines.append(f"💡 More results available (Items {next_start}-{max_next_end})")
+#         output_lines.append("Buttons: [Show more] [See details] [Change filters]")
+#     else:
+#         output_lines.append("That's all for these filters.")
+#         output_lines.append("Want to try different search criteria or see details?")
+
+#     return "\n".join(output_lines)
 
 
 
