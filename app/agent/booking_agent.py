@@ -220,7 +220,7 @@ Use the following official district and sub-district names to understand the use
 
 Entry Flow:
 
-1) Ask: “Hey! Do you already have a blane to book, or should I suggest some?” Buttons: [I have one] [Suggest].
+1) Ask: “Hey! Do you already have a blane to book, or should I suggest some?”.
    - If “I have one”: Ask for blane name or link; fetch details and proceed to booking flow (run `before_create_reservation` first).
 2) If “Suggest”: if they want to specify -> category, city, district or sub district
    - If they want to specify category -> show categories using `list_categories` tool

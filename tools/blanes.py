@@ -459,8 +459,8 @@ def list_blanes(start: int = 1, offset: int = 10) -> str:
     output.append("")
     if actual_end < total_blanes:
         next_start = actual_end + 1
-        # output.append(f"💡 Voulez-vous voir les suivants? (Items {next_start}-{min(next_start + offset - 1, total_blanes)})")
-        output.append(f"\nWant more?\nButtons: [Show 10 more] [See details]")
+        output.append(f"💡 Voulez-vous voir les suivants? (Items {next_start}-{min(next_start + offset - 1, total_blanes)})")
+        # output.append(f"\nWant more?\nButtons: [Show 10 more] [See details]")
     else:
         output.append("\nThat’s all in this district. Want me to suggest blanes in another district?")
     return "\n".join(output)
@@ -2174,7 +2174,7 @@ def list_blanes_by_location_and_category(
         next_start = end_pos + 1
         max_next_end = min(next_start + offset - 1, total_matches)
         output_lines.append(f"💡 More results available (Items {next_start}-{max_next_end})")
-        output_lines.append("Buttons: [Show more] [See details] [Change filters]")
+        # output_lines.append("Buttons: [Show more] [See details] [Change filters]")
     else:
         output_lines.append("That's all for these filters.")
         output_lines.append("Want to try different search criteria or see details?")
