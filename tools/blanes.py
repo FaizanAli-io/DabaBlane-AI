@@ -1683,6 +1683,24 @@ def introduction_message() -> str:
 
     Donnez-moi ces informations et je m’occupe du reste. 🚀
     """
+
+    message = """
+    Hello! I’m *DabaBlane AI*, your smart booking assistant. 🤖✨
+
+    I can help you with:
+    ‣   🔍 Finding *blanes* (by category, city, district, and sub-district)
+    ‣   📅 Checking availability
+    ‣   🛎️ Booking a blane for you
+    ‣   💸 Guiding you through the payment and reservation process
+
+    To show you the best options, I’ll need a few details:
+       ‣ *Category* (e.g., farm, villa, apartment, etc.)
+       ‣ *City*
+       ‣ *District / Sub-district*
+
+    Give me this information and I’ll take care of the rest. 🚀
+    """
+    
     return message
 
 
@@ -1990,7 +2008,13 @@ def list_blanes_by_location_and_category(
     district_norm = _normalize_location_text(district)
     sub_district_norm = _normalize_location_text(sub_district)
     city_norm = _normalize_location_text(city)
-    category_norm = category.lower().strip() if category else ""
+    category_norm = ""
+    if category:
+        category_norm = category.lower().strip()
+    else:
+        categories = list_categories_func()
+        available_categories = list(categories.values())
+        return f"Please provide a category. Available categories: {', '.join(available_categories)}"
     
     # Get category ID if category is specified
     category_id = None
