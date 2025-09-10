@@ -10,7 +10,7 @@ class ClientBase(BaseModel):
 
 
 class ClientCreate(ClientBase):
-    password: Optional[str] = None  # If needed during creation
+    password: Optional[str] = None
 
 
 class ClientOut(ClientBase):

@@ -1,12 +1,13 @@
-from fastapi import APIRouter, Depends
-from pydantic import BaseModel
-from app.agent.booking_agent import BookingToolAgent
-from app.database import SessionLocal
-from sqlalchemy.orm import Session
-from app.chatbot.models import Session as SessionModel, Message
-from app.database import get_db
 import uuid
 from datetime import datetime
+from pydantic import BaseModel
+from sqlalchemy.orm import Session
+from fastapi import APIRouter, Depends
+
+from app.database import get_db
+from app.database import SessionLocal
+from app.agent.booking_agent import BookingToolAgent
+from app.chatbot.models import Session as SessionModel, Message
 
 router = APIRouter()
 agent = BookingToolAgent()
@@ -74,9 +75,7 @@ def create_session():
 @router.delete("/session/{session_id}")
 def delete_session(session_id: str):
     db = SessionLocal()
-    # Delete messages associated with the session
     db.query(Message).filter(Message.session_id == session_id).delete()
-    # Delete the session itself
     deleted = db.query(SessionModel).filter(SessionModel.id == session_id).delete()
     db.commit()
     db.close()
