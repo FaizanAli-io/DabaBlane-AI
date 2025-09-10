@@ -1,24 +1,26 @@
 from datetime import date
 from dotenv import load_dotenv
+
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain.agents import AgentExecutor, create_tool_calling_agent
+
 from app.database import SessionLocal
 from app.chatbot.models import Session, Message
 
 from tools.blanes import (
-    list_categories,
-    list_reservations,
-    list_districts_and_subdistricts,
+    authenticate_email,
+    introduction_message,
     get_blane_info,
+    list_categories,
     search_blanes_advanced,
     find_blanes_by_name_or_link,
+    list_districts_and_subdistricts,
     list_blanes_by_location_and_category,
+    list_reservations,
     create_reservation,
     preview_reservation,
     prepare_reservation_prompt,
-    introduction_message,
-    authenticate_email,
     get_available_periods,
     get_available_time_slots,
     handle_user_pagination_response,
@@ -153,24 +155,24 @@ def get_chat_history(session_id: str):
 class BookingToolAgent:
     def __init__(self):
         self.tools = [
-            list_reservations,
-            list_districts_and_subdistricts,
+            authenticate_email,
+            introduction_message,
+            get_blane_info,
             list_categories,
+            search_blanes_advanced,
+            find_blanes_by_name_or_link,
+            list_districts_and_subdistricts,
+            list_blanes_by_location_and_category,
+            list_reservations,
             create_reservation,
             preview_reservation,
-            introduction_message,
-            search_blanes_advanced,
-            get_blane_info,
             prepare_reservation_prompt,
-            list_blanes_by_location_and_category,
-            find_blanes_by_name_or_link,
-            authenticate_email,
-            get_available_time_slots,
             get_available_periods,
+            get_available_time_slots,
             handle_user_pagination_response,
         ]
 
-        self.llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+        self.llm = ChatOpenAI(model="gpt-4o", temperature=0)
 
         self.prompt = ChatPromptTemplate.from_messages(
             [

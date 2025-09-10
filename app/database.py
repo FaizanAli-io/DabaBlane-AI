@@ -1,10 +1,8 @@
 import os
-import requests
 from dotenv import load_dotenv
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, declarative_base
 from sqlalchemy.pool import QueuePool
-from fastapi import Depends
+from sqlalchemy.orm import sessionmaker, declarative_base
 
 load_dotenv()
 

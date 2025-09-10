@@ -14,7 +14,6 @@ BASEURLFRONT = "https://api.dabablane.com/api/front/v1"
 
 
 def get_token():
-
     url = f"https://api.dabablane.com/api/login"
     headers = {"Content-Type": "application/json"}
     payload = {"email": "admin@dabablane.com", "password": "admin"}
@@ -74,13 +73,6 @@ def authenticate_email(session_id: str, client_email: str) -> str:
     Authenticates a user by email and associates it with a session.
     """
     with SessionLocal() as db:
-        # Check if client exists
-        # client = db.query(Client).filter(Client.email == client_email).first()
-        # if not client:
-        #     client = Client(email=client_email)
-        #     db.add(client)
-        #     db.commit()
-
         # Fetch the session
         session = db.query(Session).filter(Session.id == session_id).first()
         if not session:
@@ -210,7 +202,7 @@ def search_blanes_advanced(
 
     Key Features
 
-    AI-Powered Matching: Uses GPT-4o-mini for semantic understanding
+    AI-Powered Matching: Uses gpt-4o for semantic understanding
     Relevance Scoring: Configurable minimum relevance threshold (0.0-1.0)
     Multi-Criteria Analysis: Considers direct matches, semantic similarity, and contextual relevance
     Detailed Explanations: Provides reasoning for each match
@@ -254,7 +246,7 @@ def search_blanes_advanced(
 
     try:
         # Initialize OpenAI model (same as BookingToolAgent)
-        llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+        llm = ChatOpenAI(model="gpt-4o", temperature=0)
 
         # Create advanced AI prompt
         ai_prompt = f"""You are an expert at semantic matching of services with user search intent.
@@ -1312,209 +1304,11 @@ district_map = {
 }
 
 
-def _matches_category(name: str, description: str, category: str) -> bool:
-    """
-    Improved category matching with better keyword organization and fuzzy matching.
-    """
-    if not category:
-        return True
-
-    category_lower = category.strip().lower()
-    text_to_search = f"{name} {description or ''}".lower()
-
-    # Enhanced keyword mapping with more comprehensive terms
-    category_keywords = {
-        "restaurant": [
-            # Core restaurant terms
-            "restaurant",
-            "resto",
-            "food",
-            "cuisine",
-            "kitchen",
-            "dining",
-            # Meal types
-            "café",
-            "brunch",
-            "goûters",
-            "déjeunez",
-            "dinner",
-            "lunch",
-            "breakfast",
-            # Food items
-            "pizzeria",
-            "pizzas",
-            "pâte",
-            "sauce",
-            "tomate",
-            "ingrédients",
-            # Experience terms
-            "gastronomie",
-            "ambiance",
-            "gnaoua",
-            "artisanat",
-            "créativité",
-            # Drink terms
-            "drinks",
-            "bar",
-            "cocktail",
-            "beverage",
-            # Specific restaurant names/types
-            "bazenne",
-            "cappero",
-        ],
-        "spa": [
-            # Core spa services
-            "spa",
-            "massage",
-            "hammam",
-            "soin",
-            "wellness",
-            "détente",
-            "relaxation",
-            # Beauty services
-            "beauté",
-            "esthétique",
-            "institut",
-            "salon",
-            "coiffure",
-            # Hair services
-            "cheveux",
-            "brushing",
-            "coupe",
-            "lissant",
-            # Nail services
-            "manucure",
-            "pédicure",
-            "vernis",
-            # Facial services
-            "visage",
-            "facial",
-            "hydra",
-            "gommage",
-            # Treatment types
-            "relaxant",
-            "hydratant",
-            "réparateur",
-            "hydromassage",
-            # Facilities
-            "transats",
-            "pool",
-            "piscine",
-            # Specific spa brands/names
-            "fish",
-            "musc",
-            "taha",
-            "nashi",
-            "nelya",
-            "jasmin",
-        ],
-        "activity": [
-            # Core activity terms
-            "activité",
-            "activities",
-            "activity",
-            "fun",
-            "entertainment",
-            # Adventure activities
-            "escape",
-            "paintball",
-            "accrobranche",
-            "quad",
-            "aventures",
-            # Water activities
-            "toboggans",
-            "piscines",
-            "aquatiques",
-            "natation",
-            "eau",
-            "tubing",
-            "slide",
-            # Gaming
-            "laser game",
-            "jeux",
-            "bowling",
-            "cinema",
-            "cinéma",
-            # Sports
-            "sports",
-            "sportives",
-            "équipe",
-            "team building",
-            # Kids activities
-            "enfants",
-            "summer camp",
-            "éducatif",
-            "plein air",
-            # Tech activities
-            "robotique",
-            "lego",
-            "codage",
-            "intelligence artificielle",
-            # Creative activities
-            "créatives",
-            "culturelles",
-            "projets innovants",
-            # Business activities
-            "corporate",
-            "présentation",
-            "team",
-            "building",
-            # Event spaces
-            "villa",
-            "terrain",
-            "décor",
-        ],
-    }
-
-    # Get keywords for the category, fallback to the category itself
-    keywords = category_keywords.get(category_lower, [category_lower])
-
-    # Check for exact matches and partial matches
-    for keyword in keywords:
-        if keyword in text_to_search:
-            return True
-
-    # Additional fuzzy matching for common variations
-    if category_lower in ["restaurant", "resto"]:
-        return any(
-            term in text_to_search for term in ["manger", "plat", "menu", "chef"]
-        )
-    elif category_lower == "spa":
-        return any(
-            term in text_to_search for term in ["bien-être", "soins", "thérapie"]
-        )
-    elif category_lower in ["activity", "activité"]:
-        return any(
-            term in text_to_search for term in ["loisir", "divertissement", "adventure"]
-        )
-
-    return False
-
-
 def _normalize_location_text(text: str) -> str:
     """
     Normalize location text for better matching.
     """
-    if not text:
-        return ""
-
-    # Convert to lowercase and strip
-    normalized = text.lower().strip()
-
-    # Handle common variations and abbreviations
-    location_variations = {
-        "ain": "aïn",
-        "centre-ville": "centre ville",
-        "sidi belyout (centre ville, médina)": [
-            "sidi belyout",
-            "centre ville",
-            "médina",
-        ],
-        "ain diab (corniche)": ["ain diab", "corniche", "aïn diab"],
-        "roches noires (belvédère)": ["roches noires", "belvédère"],
-    }
-
-    return normalized
+    return text.lower().strip()
 
 
 @tool("introduction_message")
@@ -1814,9 +1608,9 @@ def list_blanes_by_location_and_category(
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
     # Normalize input filters
+    city_norm = _normalize_location_text(city)
     district_norm = _normalize_location_text(district)
     sub_district_norm = _normalize_location_text(sub_district)
-    city_norm = _normalize_location_text(city)
     category_norm = ""
     if category:
         category_norm = category.lower().strip()
@@ -1862,10 +1656,10 @@ def list_blanes_by_location_and_category(
             api_page = ((start - 1) // 100) + 1
 
             params = {
-                "paginationSize": 100,
                 "page": api_page,
                 "sort_order": "asc",
                 "category_id": category_id,
+                "paginationSize": 100,
             }
 
             response = httpx.get(
