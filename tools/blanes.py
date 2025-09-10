@@ -139,7 +139,7 @@ def get_all_blanes_simple() -> list:
     if not token:
         return []
     
-    url = f"{BASEURLBACK}/blanes"
+    url = f"{BASEURLBACK}/getBlanesByCategory"
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json"
@@ -185,7 +185,7 @@ def get_all_blanes_simple() -> list:
     return all_blanes
 
 @tool("search_blanes_advanced")
-def search_blanes_advanced(session_id: str, keywords: str, min_relevance: float = 0.5) -> str:
+def search_blanes_advanced(session_id: str, keywords: str, min_relevance: float = 0.9) -> str:
     """
         An AI-powered semantic search tool that finds relevant "blanes" (services/providers) based on user keywords and intent, with configurable relevance scoring.
         When to Use This Tool
@@ -817,219 +817,6 @@ def prepare_reservation_prompt(blane_id: int) -> str:
     return msg.strip()
 
 
-# @tool("create_reservation")
-# def create_reservation(
-#     session_id: str,
-#     blane_id: int,
-#     name: str = "N/A",
-#     email: str = "N/A",
-#     phone: str = "N/A",
-#     city: str = "N/A",
-#     date: str = "N/A",
-#     end_date: str = "N/A",
-#     time: str = "N/A",
-#     quantity: int = 1,
-#     number_persons: int = 1,
-#     delivery_address: str = "N/A",
-#     comments: str = "N/A"
-# ) -> str:
-#     """
-#     Handles reservation or order creation.
-#     """
-#     from datetime import datetime, timedelta
-#     import httpx
-
-#     token = get_token()
-#     if not token:
-#         return "❌ Failed to retrieve token."
-
-#     headers = {
-#         "Authorization": f"Bearer {token}",
-#         "Content-Type": "application/json"
-#     }
-
-#     try:
-#         res = httpx.get(f"{BASEURLBACK}/blanes/{blane_id}", headers=headers)
-#         res.raise_for_status()
-#         blane = res.json()["data"]
-#         if not blane:
-#             return f"❌ Blane with ID {blane_id} not found."
-#     except Exception as e:
-#         return f"❌ Error fetching blane: {e}"
-
-#     blane_type = blane.get("type")
-#     type_time = blane.get("type_time")
-#     base_price = float(blane.get("price_current", 0))
-#     total_price = base_price * quantity
-
-#     # 🔸 Handle Delivery Cost (for orders)
-#     if blane_type == "order" and not blane.get("is_digital"):
-#         if blane.get("city") != city:
-#             total_price += float(blane.get("livraison_out_city", 0))
-#         else:
-#             total_price += float(blane.get("livraison_in_city", 0))
-
-#     # 🔸 Determine supported payment options from blane
-#     supports_online = bool(blane.get("online"))
-#     supports_partiel = bool(blane.get("partiel"))
-#     supports_cash = bool(blane.get("cash"))
-
-#     # 🔸 Choose payment route: prefer partial if available, else full online, else cash
-#     payment_route = "cash"
-#     if supports_partiel:
-#         payment_route = "partiel"
-#     elif supports_online:
-#         payment_route = "online"
-#     elif supports_cash:
-#         payment_route = "cash"
-
-#     # 🔸 Handle Partial Payments amount
-#     partiel_price = 0
-#     if payment_route == "partiel" and blane.get("partiel_field"):
-#         percent = float(blane["partiel_field"])
-#         partiel_price = round((percent / 100) * total_price)
-
-#     # 🔸 Validate reservation date
-#     today = datetime.today().date()
-#     if date != "N/A":
-#         try:
-#             date_obj = datetime.strptime(date, "%Y-%m-%d").date()
-#             if date_obj < today:
-#                 return f"❌ Reservation date {date} must not be in the past."
-#         except Exception:
-#             return f"❌ Invalid date format. Use YYYY-MM-DD."
-
-#     # 🔸 Reservation Logic
-#     if blane_type == "reservation":
-#         jours_open = blane.get("jours_creneaux", [])
-#         user_day = datetime.strptime(date, "%Y-%m-%d").strftime("%A")
-#         user_day_fr = {
-#             "Monday": "Lundi", "Tuesday": "Mardi", "Wednesday": "Mercredi",
-#             "Thursday": "Jeudi", "Friday": "Vendredi", "Saturday": "Samedi", "Sunday": "Dimanche"
-#         }.get(user_day, "")
-
-#         if jours_open and user_day_fr not in jours_open:
-#             return f"🚫 This blane is closed on {user_day}."
-
-#         if type_time == "time":
-#             heure_debut = parse_time_only(blane["heure_debut"])
-#             heure_fin = parse_time_only(blane["heure_fin"])
-#             try:
-#                 slot_time = datetime.strptime(time, "%H:%M").time()
-#             except:
-#                 return "❌ Invalid time format. Use HH:MM."
-
-#             # Check time is in valid slots
-#             current = datetime.combine(datetime.today(), heure_debut)
-#             end_dt = datetime.combine(datetime.today(), heure_fin)
-#             interval = int(blane["intervale_reservation"])
-#             valid_slots = []
-
-#             while current <= end_dt:
-#                 valid_slots.append(current.strftime("%H:%M"))
-#                 current += timedelta(minutes=interval)
-
-#             if time not in valid_slots:
-#                 return f"🕓 Invalid time. Choose from: {', '.join(valid_slots)}"
-
-#         elif type_time == "date":
-#             try:
-#                 start = parse_datetime(blane.get("start_date"))
-#                 end = parse_datetime(blane.get("expiration_date"))
-#                 user_date = datetime.strptime(date, "%Y-%m-%d")
-#                 user_end_date = datetime.strptime(end_date, "%Y-%m-%d")
-#                 if not (start.date() <= user_date.date() <= end.date()):
-#                     return f"❌ Start date must be within {start.date()} to {end.date()}"
-#                 if not (start.date() <= user_end_date.date() <= end.date()):
-#                     return f"❌ End date must be within {start.date()} to {end.date()}"
-#             except:
-#                 return "❌ Invalid start or end date format."
-
-#         payload = {
-#             "blane_id": blane_id,
-#             "name": name,
-#             "email": email,
-#             "phone": phone,
-#             "city": city,
-#             "date": date,
-#             "end_date": end_date if type_time == "date" else None,
-#             "time": time if type_time == "time" else None,
-#             "quantity": quantity,
-#             "number_persons": number_persons,
-#             "payment_method": payment_route,
-#             "status": "pending",
-#             "total_price": total_price - partiel_price,
-#             "partiel_price": partiel_price,
-#             "comments": comments
-#         }
-
-#     # 🔸 Order Logic
-#     elif blane_type == "order":
-#         if not delivery_address or delivery_address == "N/A":
-#             return "📦 Please provide a valid delivery address."
-
-#         payload = {
-#             "blane_id": blane_id,
-#             "name": name,
-#             "email": email,
-#             "phone": phone,
-#             "city": city,
-#             "delivery_address": delivery_address,
-#             "quantity": quantity,
-#             "payment_method": payment_route,
-#             "status": "pending",
-#             "total_price": total_price - partiel_price,
-#             "partiel_price": partiel_price,
-#             "comments": comments
-#         }
-
-#     else:
-#         return "❌ Unknown blane type. Only 'reservation' or 'order' supported."
-
-#     # 🔸 Create Reservation or Order
-#     try:
-#         API = ""
-#         if blane_type == "reservation":
-#             API = f"{BASEURLFRONT}/reservations"
-#         elif blane_type == "order":
-#             API = f"{BASEURLFRONT}/orders"
-
-#         print(payload)
-#         print(API)
-
-#         res = httpx.post(f"{API}", headers=headers, json=payload)
-#         res.raise_for_status()
-#         data = res.json()
-
-#         # If online or partial payment is selected/supported, initiate payment and return URL
-#         if payment_route in ("online", "partiel"):
-#             # Extract reference from response payload: data.data.NUM_RES or data.data.NUM_ORD
-#             reference = None
-#             try:
-#                 nested = data.get("data") if isinstance(data, dict) else None
-#                 if isinstance(nested, dict):
-#                     reference = nested.get("NUM_RES") or nested.get("NUM_ORD")
-#             except Exception:
-#                 reference = None
-
-#             if reference:
-#                 try:
-#                     pay_url = f"{BASEURLFRONT}/payment/cmi/initiate"
-#                     pay_res = httpx.post(pay_url, headers=headers, json={"number": reference})
-#                     pay_res.raise_for_status()
-#                     pay_data = pay_res.json()
-#                     if pay_data.get("status") and pay_data.get("payment_url"):
-#                         return f"✅ Created. Ref: {reference}. 💳 Pay here: {pay_data.get('payment_url')}"
-#                     else:
-#                         return f"✅ Success! {data}. Payment initiation: {pay_data}"
-#                 except Exception as e:
-#                     return f"✅ Success! {data}, but payment link failed: {str(e)}"
-
-#         # Cash/offline flow
-#         return f"✅ Success! {data}"
-#     except Exception as e:
-#         return f"❌ Error submitting reservation: {str(e)}"
-
 @tool("create_reservation")
 def create_reservation(
     session_id: str,
@@ -1439,6 +1226,7 @@ def preview_reservation(
 
     return "\n".join(lines)
 
+
 @tool("list_reservations")
 def list_reservations(email: str) -> str:
     """
@@ -1478,7 +1266,7 @@ def list_reservations(email: str) -> str:
 
     return result
 
-# District mapping with corrected structure
+
 district_map = {
     "anfa": [
         "bourgogne",
@@ -1538,6 +1326,7 @@ district_map = {
         "bouznika"
     ]
 }
+
 
 def _matches_category(name: str, description: str, category: str) -> bool:
     """
@@ -1625,6 +1414,7 @@ def _matches_category(name: str, description: str, category: str) -> bool:
     
     return False
 
+
 def _normalize_location_text(text: str) -> str:
     """
     Normalize location text for better matching.
@@ -1645,6 +1435,7 @@ def _normalize_location_text(text: str) -> str:
     }
     
     return normalized
+
 
 @tool("introduction_message")
 def introduction_message() -> str:
@@ -1934,10 +1725,12 @@ def check_message_relevance(user_message: str) -> str:
     #     "next_action": "redirect_to_blanes"
     # }
 
+
 @tool("list_districts_and_subdistricts")
 def list_districts_and_subdistricts() -> str:
     """Lists all districts and sub districts."""
     return district_map
+
 
 def list_categories_func() -> str:
     """
@@ -2206,6 +1999,113 @@ def list_blanes_by_location_and_category(
     return "\n".join(output_lines)
 
 
+@tool("find_blanes_by_name_or_link")
+def find_blanes_by_name_or_link(query: str, limit: int = 10, score_threshold: int = 60) -> str:
+    """
+    Find blanes when the user provides a blane name or a link.
+    - If a link is provided, extracts the last path segment as the blane name (decodes hyphens and %20).
+    - Uses fuzzy matching to search across all active blanes by name/slug.
+    - Returns matches formatted as: "{idx} - {name} — {price} Dhs (blane_id: {id})".
+
+    Args:
+        query: Blane name or link.
+        limit: Maximum number of results to return (default 10).
+        score_threshold: Minimum fuzzy match score to include (default 60).
+    """
+    # Normalize user query (handle link vs. plain name)
+    def _extract_name_from_query(q: str) -> str:
+        q = (q or "").strip()
+        try:
+            if q.startswith("http://") or q.startswith("https://") or q.startswith("www."):
+                parsed = urlparse(q if q.startswith("http") else f"https://{q}")
+                last = [seg for seg in parsed.path.split("/") if seg][-1:] or [""]
+                candidate = unquote(last[0])
+                # Convert common slug separators to spaces
+                candidate = candidate.replace("-", " ").replace("_", " ").strip()
+                return candidate if candidate else q
+            return q
+        except Exception:
+            return q
+
+    user_text = _extract_name_from_query(query)
+    if not user_text:
+        return "❌ Please provide a valid blane name or link."
+
+    token = get_token()
+    if not token:
+        return "❌ Failed to retrieve token. Please try again later."
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+
+    # Fetch all active blanes with pagination
+    collected = []
+    page = 1
+    try:
+        while True:
+            params = {
+                "status": "active",
+                "sort_by": "created_at",
+                "sort_order": "desc",
+                "per_page": 100,
+                "page": page
+            }
+            resp = httpx.get(f"{BASEURLBACK}/getBlanesByCategory", headers=headers, params=params)
+            resp.raise_for_status()
+            payload = resp.json()
+            data = payload.get("data", [])
+            meta = payload.get("meta", {})
+            if not data:
+                break
+            collected.extend(data)
+            total = meta.get("total")
+            last_page = meta.get("last_page")
+            if last_page and page >= last_page:
+                break
+            if total and len(collected) >= int(total):
+                break
+            page += 1
+    except httpx.HTTPStatusError as e:
+        return f"❌ HTTP Error {e.response.status_code}: {e.response.text}"
+    except Exception as e:
+        return f"❌ Error fetching blanes: {str(e)}"
+
+    if not collected:
+        return "❌ No blanes found."
+
+    # Fuzzy score per blane (compare against name and slug)
+    query_norm = user_text.lower()
+    scored = []
+    for blane in collected:
+        name = (blane.get("name") or "").lower()
+        slug = (blane.get("slug") or "").lower().replace("-", " ").replace("_", " ")
+        s1 = fuzz.WRatio(query_norm, name) if name else 0
+        s2 = fuzz.partial_ratio(query_norm, name) if name else 0
+        s3 = fuzz.WRatio(query_norm, slug) if slug else 0
+        s4 = fuzz.partial_ratio(query_norm, slug) if slug else 0
+        score = max(s1, s2, s3, s4)
+        if score >= score_threshold:
+            scored.append((score, blane))
+
+    if not scored:
+        return f"❌ No similar blanes found for '{user_text}'."
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    top = [b for _, b in scored[: max(1, int(limit))]]
+
+    lines = []
+    for idx, blane in enumerate(top, start=1):
+        name = blane.get("name", "Unknown")
+        price = blane.get("price_current")
+        blane_id = blane.get("id")
+        if price:
+            lines.append(f"{idx} - {name} — {price} Dhs (blane_id: {blane_id})")
+        else:
+            lines.append(f"{idx} - {name} (blane_id: {blane_id})")
+
+    return "\n".join(lines)
 
 
 # @tool("list_blanes_by_location_and_category")
@@ -2375,112 +2275,215 @@ def list_blanes_by_location_and_category(
 #     return "\n".join(output_lines)
 
 
+# @tool("create_reservation")
+# def create_reservation(
+#     session_id: str,
+#     blane_id: int,
+#     name: str = "N/A",
+#     email: str = "N/A",
+#     phone: str = "N/A",
+#     city: str = "N/A",
+#     date: str = "N/A",
+#     end_date: str = "N/A",
+#     time: str = "N/A",
+#     quantity: int = 1,
+#     number_persons: int = 1,
+#     delivery_address: str = "N/A",
+#     comments: str = "N/A"
+# ) -> str:
+#     """
+#     Handles reservation or order creation.
+#     """
+#     from datetime import datetime, timedelta
+#     import httpx
 
-@tool("find_blanes_by_name_or_link")
-def find_blanes_by_name_or_link(query: str, limit: int = 10, score_threshold: int = 60) -> str:
-    """
-    Find blanes when the user provides a blane name or a link.
-    - If a link is provided, extracts the last path segment as the blane name (decodes hyphens and %20).
-    - Uses fuzzy matching to search across all active blanes by name/slug.
-    - Returns matches formatted as: "{idx} - {name} — {price} Dhs (blane_id: {id})".
+#     token = get_token()
+#     if not token:
+#         return "❌ Failed to retrieve token."
 
-    Args:
-        query: Blane name or link.
-        limit: Maximum number of results to return (default 10).
-        score_threshold: Minimum fuzzy match score to include (default 60).
-    """
-    # Normalize user query (handle link vs. plain name)
-    def _extract_name_from_query(q: str) -> str:
-        q = (q or "").strip()
-        try:
-            if q.startswith("http://") or q.startswith("https://") or q.startswith("www."):
-                parsed = urlparse(q if q.startswith("http") else f"https://{q}")
-                last = [seg for seg in parsed.path.split("/") if seg][-1:] or [""]
-                candidate = unquote(last[0])
-                # Convert common slug separators to spaces
-                candidate = candidate.replace("-", " ").replace("_", " ").strip()
-                return candidate if candidate else q
-            return q
-        except Exception:
-            return q
+#     headers = {
+#         "Authorization": f"Bearer {token}",
+#         "Content-Type": "application/json"
+#     }
 
-    user_text = _extract_name_from_query(query)
-    if not user_text:
-        return "❌ Please provide a valid blane name or link."
+#     try:
+#         res = httpx.get(f"{BASEURLBACK}/blanes/{blane_id}", headers=headers)
+#         res.raise_for_status()
+#         blane = res.json()["data"]
+#         if not blane:
+#             return f"❌ Blane with ID {blane_id} not found."
+#     except Exception as e:
+#         return f"❌ Error fetching blane: {e}"
 
-    token = get_token()
-    if not token:
-        return "❌ Failed to retrieve token. Please try again later."
+#     blane_type = blane.get("type")
+#     type_time = blane.get("type_time")
+#     base_price = float(blane.get("price_current", 0))
+#     total_price = base_price * quantity
 
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json"
-    }
+#     # 🔸 Handle Delivery Cost (for orders)
+#     if blane_type == "order" and not blane.get("is_digital"):
+#         if blane.get("city") != city:
+#             total_price += float(blane.get("livraison_out_city", 0))
+#         else:
+#             total_price += float(blane.get("livraison_in_city", 0))
 
-    # Fetch all active blanes with pagination
-    collected = []
-    page = 1
-    try:
-        while True:
-            params = {
-                "status": "active",
-                "sort_by": "created_at",
-                "sort_order": "desc",
-                "per_page": 100,
-                "page": page
-            }
-            resp = httpx.get(f"{BASEURLBACK}/blanes", headers=headers, params=params)
-            resp.raise_for_status()
-            payload = resp.json()
-            data = payload.get("data", [])
-            meta = payload.get("meta", {})
-            if not data:
-                break
-            collected.extend(data)
-            total = meta.get("total")
-            last_page = meta.get("last_page")
-            if last_page and page >= last_page:
-                break
-            if total and len(collected) >= int(total):
-                break
-            page += 1
-    except httpx.HTTPStatusError as e:
-        return f"❌ HTTP Error {e.response.status_code}: {e.response.text}"
-    except Exception as e:
-        return f"❌ Error fetching blanes: {str(e)}"
+#     # 🔸 Determine supported payment options from blane
+#     supports_online = bool(blane.get("online"))
+#     supports_partiel = bool(blane.get("partiel"))
+#     supports_cash = bool(blane.get("cash"))
 
-    if not collected:
-        return "❌ No blanes found."
+#     # 🔸 Choose payment route: prefer partial if available, else full online, else cash
+#     payment_route = "cash"
+#     if supports_partiel:
+#         payment_route = "partiel"
+#     elif supports_online:
+#         payment_route = "online"
+#     elif supports_cash:
+#         payment_route = "cash"
 
-    # Fuzzy score per blane (compare against name and slug)
-    query_norm = user_text.lower()
-    scored = []
-    for blane in collected:
-        name = (blane.get("name") or "").lower()
-        slug = (blane.get("slug") or "").lower().replace("-", " ").replace("_", " ")
-        s1 = fuzz.WRatio(query_norm, name) if name else 0
-        s2 = fuzz.partial_ratio(query_norm, name) if name else 0
-        s3 = fuzz.WRatio(query_norm, slug) if slug else 0
-        s4 = fuzz.partial_ratio(query_norm, slug) if slug else 0
-        score = max(s1, s2, s3, s4)
-        if score >= score_threshold:
-            scored.append((score, blane))
+#     # 🔸 Handle Partial Payments amount
+#     partiel_price = 0
+#     if payment_route == "partiel" and blane.get("partiel_field"):
+#         percent = float(blane["partiel_field"])
+#         partiel_price = round((percent / 100) * total_price)
 
-    if not scored:
-        return f"❌ No similar blanes found for '{user_text}'."
+#     # 🔸 Validate reservation date
+#     today = datetime.today().date()
+#     if date != "N/A":
+#         try:
+#             date_obj = datetime.strptime(date, "%Y-%m-%d").date()
+#             if date_obj < today:
+#                 return f"❌ Reservation date {date} must not be in the past."
+#         except Exception:
+#             return f"❌ Invalid date format. Use YYYY-MM-DD."
 
-    scored.sort(key=lambda x: x[0], reverse=True)
-    top = [b for _, b in scored[: max(1, int(limit))]]
+#     # 🔸 Reservation Logic
+#     if blane_type == "reservation":
+#         jours_open = blane.get("jours_creneaux", [])
+#         user_day = datetime.strptime(date, "%Y-%m-%d").strftime("%A")
+#         user_day_fr = {
+#             "Monday": "Lundi", "Tuesday": "Mardi", "Wednesday": "Mercredi",
+#             "Thursday": "Jeudi", "Friday": "Vendredi", "Saturday": "Samedi", "Sunday": "Dimanche"
+#         }.get(user_day, "")
 
-    lines = []
-    for idx, blane in enumerate(top, start=1):
-        name = blane.get("name", "Unknown")
-        price = blane.get("price_current")
-        blane_id = blane.get("id")
-        if price:
-            lines.append(f"{idx} - {name} — {price} Dhs (blane_id: {blane_id})")
-        else:
-            lines.append(f"{idx} - {name} (blane_id: {blane_id})")
+#         if jours_open and user_day_fr not in jours_open:
+#             return f"🚫 This blane is closed on {user_day}."
 
-    return "\n".join(lines)
+#         if type_time == "time":
+#             heure_debut = parse_time_only(blane["heure_debut"])
+#             heure_fin = parse_time_only(blane["heure_fin"])
+#             try:
+#                 slot_time = datetime.strptime(time, "%H:%M").time()
+#             except:
+#                 return "❌ Invalid time format. Use HH:MM."
 
+#             # Check time is in valid slots
+#             current = datetime.combine(datetime.today(), heure_debut)
+#             end_dt = datetime.combine(datetime.today(), heure_fin)
+#             interval = int(blane["intervale_reservation"])
+#             valid_slots = []
+
+#             while current <= end_dt:
+#                 valid_slots.append(current.strftime("%H:%M"))
+#                 current += timedelta(minutes=interval)
+
+#             if time not in valid_slots:
+#                 return f"🕓 Invalid time. Choose from: {', '.join(valid_slots)}"
+
+#         elif type_time == "date":
+#             try:
+#                 start = parse_datetime(blane.get("start_date"))
+#                 end = parse_datetime(blane.get("expiration_date"))
+#                 user_date = datetime.strptime(date, "%Y-%m-%d")
+#                 user_end_date = datetime.strptime(end_date, "%Y-%m-%d")
+#                 if not (start.date() <= user_date.date() <= end.date()):
+#                     return f"❌ Start date must be within {start.date()} to {end.date()}"
+#                 if not (start.date() <= user_end_date.date() <= end.date()):
+#                     return f"❌ End date must be within {start.date()} to {end.date()}"
+#             except:
+#                 return "❌ Invalid start or end date format."
+
+#         payload = {
+#             "blane_id": blane_id,
+#             "name": name,
+#             "email": email,
+#             "phone": phone,
+#             "city": city,
+#             "date": date,
+#             "end_date": end_date if type_time == "date" else None,
+#             "time": time if type_time == "time" else None,
+#             "quantity": quantity,
+#             "number_persons": number_persons,
+#             "payment_method": payment_route,
+#             "status": "pending",
+#             "total_price": total_price - partiel_price,
+#             "partiel_price": partiel_price,
+#             "comments": comments
+#         }
+
+#     # 🔸 Order Logic
+#     elif blane_type == "order":
+#         if not delivery_address or delivery_address == "N/A":
+#             return "📦 Please provide a valid delivery address."
+
+#         payload = {
+#             "blane_id": blane_id,
+#             "name": name,
+#             "email": email,
+#             "phone": phone,
+#             "city": city,
+#             "delivery_address": delivery_address,
+#             "quantity": quantity,
+#             "payment_method": payment_route,
+#             "status": "pending",
+#             "total_price": total_price - partiel_price,
+#             "partiel_price": partiel_price,
+#             "comments": comments
+#         }
+
+#     else:
+#         return "❌ Unknown blane type. Only 'reservation' or 'order' supported."
+
+#     # 🔸 Create Reservation or Order
+#     try:
+#         API = ""
+#         if blane_type == "reservation":
+#             API = f"{BASEURLFRONT}/reservations"
+#         elif blane_type == "order":
+#             API = f"{BASEURLFRONT}/orders"
+
+#         print(payload)
+#         print(API)
+
+#         res = httpx.post(f"{API}", headers=headers, json=payload)
+#         res.raise_for_status()
+#         data = res.json()
+
+#         # If online or partial payment is selected/supported, initiate payment and return URL
+#         if payment_route in ("online", "partiel"):
+#             # Extract reference from response payload: data.data.NUM_RES or data.data.NUM_ORD
+#             reference = None
+#             try:
+#                 nested = data.get("data") if isinstance(data, dict) else None
+#                 if isinstance(nested, dict):
+#                     reference = nested.get("NUM_RES") or nested.get("NUM_ORD")
+#             except Exception:
+#                 reference = None
+
+#             if reference:
+#                 try:
+#                     pay_url = f"{BASEURLFRONT}/payment/cmi/initiate"
+#                     pay_res = httpx.post(pay_url, headers=headers, json={"number": reference})
+#                     pay_res.raise_for_status()
+#                     pay_data = pay_res.json()
+#                     if pay_data.get("status") and pay_data.get("payment_url"):
+#                         return f"✅ Created. Ref: {reference}. 💳 Pay here: {pay_data.get('payment_url')}"
+#                     else:
+#                         return f"✅ Success! {data}. Payment initiation: {pay_data}"
+#                 except Exception as e:
+#                     return f"✅ Success! {data}, but payment link failed: {str(e)}"
+
+#         # Cash/offline flow
+#         return f"✅ Success! {data}"
+#     except Exception as e:
+#         return f"❌ Error submitting reservation: {str(e)}"
