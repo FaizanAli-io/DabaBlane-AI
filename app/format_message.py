@@ -1,5 +1,6 @@
 import re
 
+
 def formatting(text):
     # Convert Markdown bold to WhatsApp bold
     text = re.sub(r"\*\*(.*?)\*\*", r"*\1*", text)

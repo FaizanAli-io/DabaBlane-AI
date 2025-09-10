@@ -18,15 +18,12 @@
 # PHONE_NUMBER_ID = os.getenv("META_PHONE_NUMBER_ID")
 
 
-
-
 # @router.get("/meta-webhook")
 # def verify_webhook(request: Request):
 #     params = request.query_params
 #     if params.get("hub.verify_token") == VERIFY_TOKEN:
 #         return PlainTextResponse(params.get("hub.challenge"))
 #     return PlainTextResponse("Invalid token", status_code=403)
-
 
 
 # @router.post("/meta-webhook")
@@ -70,7 +67,7 @@
 
 #         # --- Get bot reply ---
 #         response = agent.get_response(incoming_text=text, session_id=session_id)
-        
+
 #         # formatted response
 #         response = formatting(response)
 
@@ -90,10 +87,9 @@
 #         print("❌ Error in webhook:", e)
 
 #     finally:
-#         db.close() 
+#         db.close()
 
 #     return {"status": "ok"}
-
 
 
 # async def send_whatsapp_message(recipient_number: str, message: str):
@@ -275,14 +271,20 @@ def db_operation_with_retry(operation_func, max_retries=3, delay=1):
             return operation_func()
         except OperationalError as e:
             error_msg = str(e).lower()
-            if ("ssl connection has been closed" in error_msg or 
-                "connection" in error_msg) and attempt < max_retries - 1:
-                logger.warning(f"Database connection failed (attempt {attempt + 1}/{max_retries}), retrying in {delay} seconds...")
+            if (
+                "ssl connection has been closed" in error_msg
+                or "connection" in error_msg
+            ) and attempt < max_retries - 1:
+                logger.warning(
+                    f"Database connection failed (attempt {attempt + 1}/{max_retries}), retrying in {delay} seconds..."
+                )
                 time.sleep(delay)
                 delay *= 2  # Exponential backoff
                 continue
             else:
-                logger.error(f"Database operation failed after {max_retries} attempts: {e}")
+                logger.error(
+                    f"Database operation failed after {max_retries} attempts: {e}"
+                )
                 raise e
         except Exception as e:
             logger.error(f"Unexpected database error: {e}")
@@ -300,7 +302,7 @@ def verify_webhook(request: Request):
 @router.post("/meta-webhook")
 async def receive_message(request: Request):
     db = None
-    
+
     try:
         data = await request.json()
         logger.info("📩 Incoming data: %s", data)
@@ -329,7 +331,7 @@ async def receive_message(request: Request):
         # Create database session with retry logic
         def create_db_session():
             return SessionLocal()
-        
+
         db = db_operation_with_retry(create_db_session)
 
         # --- Session handling with retry ---
@@ -346,10 +348,10 @@ async def receive_message(request: Request):
         # --- Save user message with retry ---
         def save_user_message():
             user_message = Message(
-                session_id=session_id, 
-                sender="user", 
-                content=text, 
-                timestamp=datetime.utcnow()
+                session_id=session_id,
+                sender="user",
+                content=text,
+                timestamp=datetime.utcnow(),
             )
             db.add(user_message)
             db.commit()
@@ -364,10 +366,10 @@ async def receive_message(request: Request):
         # --- Save bot response with retry ---
         def save_bot_message():
             bot_message = Message(
-                session_id=session_id, 
-                sender="bot", 
-                content=formatted_response, 
-                timestamp=datetime.utcnow()
+                session_id=session_id,
+                sender="bot",
+                content=formatted_response,
+                timestamp=datetime.utcnow(),
             )
             db.add(bot_message)
             db.commit()
@@ -383,18 +385,23 @@ async def receive_message(request: Request):
         # Return a graceful response even if database fails
         if "wa_id" in locals():
             try:
-                await send_whatsapp_message(wa_id, "Sorry, I'm experiencing technical difficulties. Please try again in a moment.")
+                await send_whatsapp_message(
+                    wa_id,
+                    "Sorry, I'm experiencing technical difficulties. Please try again in a moment.",
+                )
             except:
                 pass
         return {"status": "database_error", "error": "temporary_database_issue"}
-        
+
     except Exception as e:
         logger.error("❌ Exception in webhook: %s", e)
         traceback.print_exc()
         # Send error message to user if possible
         if "wa_id" in locals():
             try:
-                await send_whatsapp_message(wa_id, "Sorry, something went wrong. Please try again.")
+                await send_whatsapp_message(
+                    wa_id, "Sorry, something went wrong. Please try again."
+                )
             except:
                 pass
         return {"status": "error"}
@@ -413,13 +420,13 @@ async def send_whatsapp_message(recipient_number: str, message: str):
     url = f"https://graph.facebook.com/v19.0/{PHONE_NUMBER_ID}/messages"
     headers = {
         "Authorization": f"Bearer {WHATSAPP_TOKEN}",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
     }
     payload = {
         "messaging_product": "whatsapp",
         "to": recipient_number,
         "type": "text",
-        "text": {"body": message}
+        "text": {"body": message},
     }
 
     try:

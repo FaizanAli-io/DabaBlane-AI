@@ -18,7 +18,9 @@ from app.database import Base
 class Session(Base):
     __tablename__ = "sessions"
 
-    id = Column(String(64), primary_key=True, index=True)  # Use a UUID string or similar
+    id = Column(
+        String(64), primary_key=True, index=True
+    )  # Use a UUID string or similar
     client_email = Column(String(255), nullable=True)
     client_id = Column(Integer, nullable=True)
     whatsapp_number = Column(String(30), nullable=True)

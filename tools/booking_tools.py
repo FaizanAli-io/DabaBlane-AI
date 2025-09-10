@@ -7,12 +7,10 @@ from datetime import datetime, timezone
 
 load_dotenv()
 BASE_URL = os.getenv("NOCODB_BASE_URL")
-TOKEN = os.getenv("NOCODB_API_TOKEN") 
+TOKEN = os.getenv("NOCODB_API_TOKEN")
 
-headers = {
-    "accept": "application/json",
-    "xc-token": TOKEN
-}
+headers = {"accept": "application/json", "xc-token": TOKEN}
+
 
 @tool("check_reservation_by_client")
 def check_reservation_by_client(client_email: str) -> str:
@@ -22,23 +20,25 @@ def check_reservation_by_client(client_email: str) -> str:
     table_id = "mb92g41bhfubow2"  # Booking-Reservation table ID
     url = f"{BASE_URL}/api/v2/tables/{table_id}/records?where=(Email%20Client,eq,{client_email})"
 
-    response = requests.get(url, headers=headers)   
-    
+    response = requests.get(url, headers=headers)
+
     if response.status_code != 200:
         return f"Failed to fetch data. Status code: {response.status_code}"
 
     records = response.json().get("list", [])
     if not records:
         return f"No reservations found for {client_email}."
-    
+
     # Customize the info you want to return
     return f"Found {len(records)} reservation(s) for {client_email}. Example: ID Réservation = {records[0].get('ID Réservation')}"
 
+
 # final_total_price_incl_tax: Final price including tax (e.g., '1000 MAD').
 #         reservation_id: ID of the reservation (e.g., "#RES-QC000000").
-        # reservation_type: Type of the reservation (default 'Instante').
-        # reservation_status: Status of the reservation (default 'Client Confirmed').
-        # ready: Whether it's ready (default True).
+# reservation_type: Type of the reservation (default 'Instante').
+# reservation_status: Status of the reservation (default 'Client Confirmed').
+# ready: Whether it's ready (default True).
+
 
 @tool("create_reservation_for_client")
 def create_reservation_for_client(
@@ -52,7 +52,7 @@ def create_reservation_for_client(
     # ready: bool = True,
     starting_date_time: str,
     ending_date_time: str,
-    **extra_fields
+    **extra_fields,
 ) -> str:
     """
     Create a new reservation for a client.
@@ -86,7 +86,7 @@ def create_reservation_for_client(
         # "Pret?": ready if ready is not None else True,
         "Pret?": True,
         "Créneau de début": starting_date_time,
-        "Créneau de fin": ending_date_time
+        "Créneau de fin": ending_date_time,
     }
 
     payload.update(extra_fields)
@@ -100,6 +100,7 @@ def create_reservation_for_client(
     else:
         return f"❌ Failed to create reservation. Status: {response.status_code}, Response: {response.text}"
 
+
 import requests
 from langchain_core.tools import tool
 
@@ -107,6 +108,7 @@ BASE_URL = "https://database.dabablane.com"
 TOKEN = "PvRd94S5nqUOtplcdu4ZDq-4O45TGuls72CAekYT"
 TABLE_ID = "mb92g41bhfubow2"  # Booking-Reservation
 HEADERS = {"xc-token": TOKEN}
+
 
 @tool
 def get_all_reservations() -> str:
@@ -130,6 +132,7 @@ def get_all_reservations() -> str:
         results.append(info)
 
     return "\n".join(results[:10]) + ("\n...and more." if len(results) > 10 else "")
+
 
 # import requests
 # from langchain_core.tools import tool
@@ -210,14 +213,13 @@ def get_all_reservations() -> str:
 #         return f"❌ Email not found in reservations. Please check and try again."
 
 
-
-
-#---------------------------------
+# ---------------------------------
 
 import requests
 from langchain_core.tools import tool
 from app.database import SessionLocal
 from app.chatbot.models import Session
+
 BASE_URL = "https://database.dabablane.com"
 TOKEN = "PvRd94S5nqUOtplcdu4ZDq-4O45TGuls72CAekYT"
 HEADERS = {"xc-token": TOKEN}
@@ -227,6 +229,7 @@ TABLE_ID = "mb92g41bhfubow2"  # Booking-Reservation table
 from app.chatbot.models import Session
 from app.database import SessionLocal
 from datetime import datetime
+
 
 @tool("is_authenticated")
 def is_authenticated(session_id: str) -> str:
@@ -268,7 +271,6 @@ def authenticate_email(session_id: str, client_email: str) -> str:
         db.commit()
 
     return f"Authenticated {client_email} for session {session_id}"
-
 
 
 @tool("check_reservation_info")
@@ -406,4 +408,3 @@ def check_reservation_info(session_id: str, question: str) -> str:
 
     # # Default fallback
     # return f"Found {len(reservations)} reservation(s). Try asking for 'status', 'date', 'price', 'latest', or 'upcoming'."
-

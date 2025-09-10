@@ -1,5 +1,6 @@
 from langchain.tools import tool
 
+
 @tool("witty_conversational_tool")
 def witty_conversational_tool(question: str) -> str:
     """
@@ -10,7 +11,7 @@ def witty_conversational_tool(question: str) -> str:
         "date": "Go with confidence, and wear something that says 'I look good and I know it!' Maybe toss in a touch of mystery – like a Batman cape. 😎🦇",
         "weather": "If the sky is moody, grab your umbrella. If it's sunny, wear your coolest shades and pretend you're in a movie.",
         "hungry": "Food is love. Pizza is life. Go forth and conquer a slice 🍕.",
-        "bored": "Bored? Try dancing in your room like nobody's watching. Or like your cat is judging you."
+        "bored": "Bored? Try dancing in your room like nobody's watching. Or like your cat is judging you.",
     }
 
     lower = question.lower()
