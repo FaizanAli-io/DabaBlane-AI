@@ -1,88 +1,24 @@
 import httpx
-import requests
 from enum import Enum
 from fuzzywuzzy import fuzz
-from datetime import datetime
 from langchain.tools import tool
-from app.database import SessionLocal
-from app.chatbot.models import Session
 from urllib.parse import urlparse, unquote
 
-BASEURL = "https://api.dabablane.com/api"
-BASEURLBACK = "https://api.dabablane.com/api/back/v1"
-BASEURLFRONT = "https://api.dabablane.com/api/front/v1"
+from .config import (
+    BASEURLBACK,
+    district_map,
+    blane_keywords,
+    location_keywords,
+    greeting_keywords,
+    irrelevant_keywords,
+)
 
-
-def get_token():
-    url = f"https://api.dabablane.com/api/login"
-    headers = {"Content-Type": "application/json"}
-    payload = {"email": "admin@dabablane.com", "password": "admin"}
-    response = requests.post(url, headers=headers, json=payload)
-    print(response)
-    token = None
-    if response.status_code == 200:
-        token = response.json()["data"]["user_token"]
-        return token
-    else:
-        return "Try again later."
-
-
-def format_date(date_str):
-    if not date_str:
-        return "N/A"
-    for fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%d %H:%M:%S"):
-        try:
-            return datetime.strptime(date_str, fmt).strftime("%d %B %Y")
-        except ValueError:
-            continue
-    return date_str
-
-
-def format_time(time_str):
-    if not time_str:
-        return "N/A"
-    for fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%H:%M:%S"):
-        try:
-            return datetime.strptime(time_str, fmt).strftime("%I:%M %p")
-        except ValueError:
-            continue
-    return time_str
-
-
-def parse_datetime(date_str):
-    for fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%d %H:%M:%S", "%H:%M:%S"):
-        try:
-            return datetime.strptime(date_str, fmt)
-        except ValueError:
-            continue
-    return None
-
-
-def parse_time_only(time_str):
-    for fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%H:%M:%S"):
-        try:
-            return datetime.strptime(time_str, fmt).time()
-        except ValueError:
-            continue
-    return None
-
-
-@tool("authenticate_email")
-def authenticate_email(session_id: str, client_email: str) -> str:
-    """
-    Authenticates a user by email and associates it with a session.
-    """
-    with SessionLocal() as db:
-        # Fetch the session
-        session = db.query(Session).filter(Session.id == session_id).first()
-        if not session:
-            return f"Session {session_id} not found."
-
-        # Set client_email and commit
-        session.client_email = client_email
-        db.commit()
-
-    return f"Authenticated {client_email} for session {session_id}"
+from .utils import (
+    get_token,
+    format_date,
+    format_time,
+    normalize_text,
+)
 
 
 class PaginationSentiment(Enum):
@@ -90,9 +26,7 @@ class PaginationSentiment(Enum):
     NEGATIVE = "negative"
 
 
-@tool("list_categories")
-def list_categories() -> str:
-    """ """
+def _list_categories():
     token = get_token()
     if not token:
         return "❌ Failed to retrieve token. Please try again later."
@@ -116,14 +50,7 @@ def list_categories() -> str:
         return {}
 
 
-def get_all_blanes_simple() -> list:
-    """
-    Retrieves ALL blanes from the API and returns them as a simple list of dictionaries.
-    This version is more suitable for programmatic use.
-
-    Returns:
-        list: List of dictionaries containing blane data, or empty list on error
-    """
+def get_all_blanes_simple():
     token = get_token()
     if not token:
         return []
@@ -138,18 +65,18 @@ def get_all_blanes_simple() -> list:
         while True:
             params = {
                 "status": "active",
-                "sort_by": "created_at",
                 "sort_order": "desc",
-                "per_page": 10,
+                "sort_by": "created_at",
                 "page": current_page,
+                "per_page": 10,
             }
 
             response = httpx.get(url, headers=headers, params=params)
             response.raise_for_status()
             data = response.json()
 
-            page_blanes = data.get("data", [])
             meta = data.get("meta", {})
+            page_blanes = data.get("data", [])
             total_blanes = meta.get("total", 0)
 
             if not page_blanes:
@@ -171,163 +98,51 @@ def get_all_blanes_simple() -> list:
     return all_blanes
 
 
-@tool("search_blanes_advanced")
-def search_blanes_advanced(
-    session_id: str, keywords: str, min_relevance: float = 0.9
-) -> str:
+@tool("list_categories")
+def list_categories() -> str:
+    "List all categories from the API"
+    return _list_categories()
+
+
+@tool("introduction_message", return_direct=True)
+def introduction_message() -> str:
     """
-    An AI-powered semantic search tool that finds relevant "blanes" (services/providers) based on user keywords and intent, with configurable relevance scoring.
-    When to Use This Tool
-    Call this tool when users ask queries similar to:
-    Service Discovery Queries
+    Returns the introduction message for DabaGPT booking assistant.
 
-    "Show me blanes related to photoshoot" (keyword: photoshoot)
-    "I need photographers for my wedding" (keyword: wedding photography)
-    "Find me spa services" (keyword: spa)
-    "Looking for catering options" (keyword: catering)
+    Use this tool when:
+    - User sends greeting messages like "hello", "hi", "salam", "assalam o alaikum"
+    - User asks "what can you do" or "help me"
+    - User starts a new conversation
+    - User asks about the bot's capabilities or services
+    - User sends any initial greeting or inquiry about services
 
-    Business/Project Needs
+    The tool provides a comprehensive introduction explaining:
+    - Bot identity as DabaGPT booking assistant
+    - Available services (finding blanes, checking availability, making reservations)
+    - Required information needed from users (category, city, district, sub-district, date)
+    - Friendly greeting response in local language (French/Roman)
 
-    "I want to create a website, suggest me something?" (keyword: website creation)
-    "Help me find marketing services" (keyword: marketing)
-    "I need event planning assistance" (keyword: event planning)
-    "Looking for graphic design services" (keyword: graphic design)
-
-    General Service Exploration
-
-    "What blanes do you have for restaurants?" (keyword: restaurants)
-    "Show me fitness-related services" (keyword: fitness)
-    "Find me beauty and wellness providers" (keyword: beauty wellness)
-    "I need home improvement services" (keyword: home improvement)
-
-    Key Features
-
-    AI-Powered Matching: Uses gpt-4o for semantic understanding
-    Relevance Scoring: Configurable minimum relevance threshold (0.0-1.0)
-    Multi-Criteria Analysis: Considers direct matches, semantic similarity, and contextual relevance
-    Detailed Explanations: Provides reasoning for each match
-
-    Input Parameters
-
-    session_id: Unique identifier for the search session
-    keywords: The search terms or user intent (extracted from user query)
-    min_relevance: Optional threshold (default 0.5) - higher values return fewer, more precise results
-
-    Scoring System
-
-    0.9-1.0: Perfect match, exactly what user wants
-    0.7-0.8: Very relevant, strong semantic connection
-    0.5-0.6: Moderately relevant, related services
-    0.3-0.4: Weakly related, might be useful
-    Below 0.3: Not relevant (filtered out)
+    Also when user says "Salam" in any form - respond with "Walikum Assalam" instead of Hello.
     """
-    from langchain_openai import ChatOpenAI
-    import json
 
-    if not 0.0 <= min_relevance <= 1.0:
-        min_relevance = 0.5
+    categories = ", ".join(_list_categories().values())
 
-    # Get all blanes
-    all_blanes_data = get_all_blanes_simple()
-    if not all_blanes_data:
-        return "❌ Failed to retrieve blanes data"
+    return f"""
+    Bonjour! Je suis *DabaGPT*, votre assistant de réservation intelligent. 🤖✨
 
-    # Prepare data for AI analysis
-    blanes_info = []
-    for blane in all_blanes_data:
-        blane_entry = {
-            "id": blane.get("id", "Unknown"),
-            "title": blane.get("name", "Unknown"),
-            "description": blane.get("description", ""),
-            "category": blane.get("category", ""),
-            "type": blane.get("type", ""),
-        }
-        blanes_info.append(blane_entry)
+    Je peux vous aider à :
+    ‣   🔍 Trouver des *blanes* (par catégorie ou localisation)
+    ‣   📅 Vérifier la disponibilité
+    ‣   🛎️ Réserver un blane pour vous
+    ‣   💸 Vous guider dans le processus de paiement et de réservation
 
-    try:
-        # Initialize OpenAI model (same as BookingToolAgent)
-        llm = ChatOpenAI(model="gpt-4o", temperature=0)
+    Pour vous montrer les meilleures options, j'aurai besoin de quelques détails :
+       ‣ *Catégorie* (par ex: {categories})
+       ‣ *Quartier* (Si tu veux)
+       ‣ *Ville*
 
-        # Create advanced AI prompt
-        ai_prompt = f"""You are an expert at semantic matching of services with user search intent.
-
-                        TASK: Find blanes highly relevant to: "{keywords}" with minimum relevance of {min_relevance}
-
-                        BLANES DATA:
-                        {json.dumps(blanes_info, indent=2)}
-
-                        ANALYSIS CRITERIA:
-                        1. Direct keyword matches in title/description (high score)
-                        2. Semantic similarity and related concepts (medium score)
-                        3. Contextual relevance (e.g., wedding → photography, catering)
-                        4. Industry connections and complementary services
-
-                        SCORING GUIDE:
-                        - 0.9-1.0: Perfect match, exactly what user wants
-                        - 0.7-0.8: Very relevant, strong semantic connection
-                        - 0.5-0.6: Moderately relevant, related services
-                        - 0.3-0.4: Weakly related, might be useful
-                        - Below 0.3: Not relevant
-
-                        Return ONLY JSON array with scores >= {min_relevance}:
-                        [
-                            {{"id": "blane_id", "title": "blane_title", "relevance_score": 0.85, "reason": "detailed explanation"}}
-                        ]
-
-                        If no matches meet the threshold, return []"""
-
-        # Get AI response
-        response = llm.invoke(ai_prompt)
-        ai_content = response.content.strip()
-
-        # Parse JSON response
-        try:
-            if ai_content.startswith("```json"):
-                ai_content = (
-                    ai_content.replace("```json", "").replace("```", "").strip()
-                )
-            elif ai_content.startswith("```"):
-                ai_content = ai_content.replace("```", "").strip()
-
-            relevant_blanes = json.loads(ai_content)
-
-            if not isinstance(relevant_blanes, list):
-                raise ValueError("AI response is not a list")
-
-        except (json.JSONDecodeError, ValueError) as e:
-            # Fallback to rule-based matching
-            print(f"AI parsing failed: {e}, using fallback")
-            # relevant_blanes = analyze_blanes_with_ai("", keywords, blanes_info)
-            # relevant_blanes = [b for b in relevant_blanes if b.get('relevance_score', 0) >= min_relevance]
-
-        if not relevant_blanes:
-            return f"❌ No blanes found with relevance >= {min_relevance} for keywords: '{keywords}'"
-
-        # Format output
-        output = [f"🎯 Advanced Search Results (Session: {session_id})"]
-        output.append(f"Keywords: '{keywords}' | Min Relevance: {min_relevance}")
-        output.append(f"Found {len(relevant_blanes)} highly relevant blanes:")
-        output.append("")
-
-        for i, blane in enumerate(relevant_blanes, 1):
-            score = blane.get("relevance_score", 0)
-            reason = blane.get("reason", "Meets relevance criteria")
-
-            score_emoji = (
-                "🎯"
-                if score >= 0.9
-                else "🔥" if score >= 0.8 else "✨" if score >= 0.7 else "💫"
-            )
-
-            output.append(f"{i}. {score_emoji} {blane['title']} (ID: {blane['id']})")
-            # output.append(f"   📊 Score: {score:.2f}/1.0")
-            output.append(f"   💡 {reason}")
-            output.append("")
-
-        return "\n".join(output)
-
-    except Exception as e:
-        return f"❌ Error in advanced search: {str(e)}"
+    Donnez-moi ces informations et je m'occupe du reste. 🚀
+    """
 
 
 @tool("list_blanes")
@@ -491,7 +306,6 @@ def handle_user_pagination_response(
 
         if next_start <= total_blanes:
             # Update session with new start position
-            # set_session('current_start', next_start)
             return blanes_list(next_start, current_offset)
         else:
             return "❌ Vous êtes déjà à la fin de la liste. (You're already at the end of the list.)"
@@ -501,128 +315,6 @@ def handle_user_pagination_response(
 
     else:
         return "❓ Je n'ai pas compris votre réponse. Dites 'oui' pour voir plus ou 'non' pour arrêter. (I didn't understand your response. Say 'yes' to see more or 'no' to stop.)"
-
-
-@tool("get_available_time_slots")
-def get_available_time_slots(blane_id: int, date: str) -> str:
-    """
-    Retrieves available time slots for a specific blane on a given date using blane ID.
-    Only returns slots that are available, along with their remaining capacity.
-
-    Parameters:
-    - blane_id: The ID of the blane (integer)
-    - date: The date to check availability for (format: YYYY-MM-DD)
-    """
-    token = get_token()
-    if not token:
-        return "❌ Failed to retrieve token. Please try again later."
-
-    # Step 1: Get blane details directly
-    url = f"{BASEURLBACK}/blanes/{blane_id}"
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-
-    try:
-        response = httpx.get(url, headers=headers)
-        response.raise_for_status()
-        blane = response.json().get("data", {})
-
-        if not blane:
-            return f"❌ Blane with ID {blane_id} not found."
-
-        if blane.get("type") != "reservation" or blane.get("type_time") != "time":
-            return "❌ Unsupported reservation type returned by the API."
-
-        slug = blane.get("slug")
-        if not slug:
-            return "❌ Could not find slug for this blane."
-
-        # Step 2: Get available time slots using slug
-        slots_url = f"{BASEURLFRONT}/blanes/{slug}/available-time-slots"
-        slot_params = {"date": date}
-
-        slots_response = httpx.get(slots_url, headers=headers, params=slot_params)
-        slots_response.raise_for_status()
-        result = slots_response.json()
-
-        if result.get("type") != "time":
-            return "❌ Unsupported reservation type returned by the API. Try get_available_periods instead."
-
-        time_slots = result.get("data", [])
-        available_slots = [
-            f"- {slot['time']} → {slot['remainingCapacity']} spots"
-            for slot in time_slots
-            if slot["available"]
-        ]
-
-        if not available_slots:
-            return f"No available time slots for '{blane['name']}' on {date}."
-
-        output = [f"🗓 Available Time Slots for '{blane['name']}' on {date}:"]
-        output.extend(available_slots)
-        return "\n".join(output)
-
-    except httpx.HTTPStatusError as e:
-        return f"❌ HTTP Error {e.response.status_code}: {e.response.text}"
-    except Exception as e:
-        return f"❌ Error: {str(e)}"
-
-
-@tool("get_available_periods")
-def get_available_periods(blane_id: int) -> str:
-    """
-    Retrieves available periods for a date-based reservation blane using its ID.
-    Only shows periods that are available, along with remaining capacity.
-
-    Parameters:
-    - blane_id: The ID of the blane (integer)
-    """
-    token = get_token()
-    if not token:
-        return "❌ Failed to retrieve token. Please try again later."
-
-    # Step 1: Get blane info by ID
-    url = f"{BASEURLBACK}/blanes/{blane_id}"
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-
-    try:
-        response = httpx.get(url, headers=headers)
-        response.raise_for_status()
-        blane = response.json().get("data", {})
-
-        if not blane:
-            return f"❌ Blane with ID {blane_id} not found."
-
-        if blane.get("type") != "reservation" or blane.get("type_time") != "date":
-            return "❌ Unsupported reservation type returned by the API. Try get_available_time_slots instead."
-
-        slug = blane.get("slug")
-        if not slug:
-            return "❌ Could not find slug for this blane."
-
-        # Step 2: Get detailed info including available periods using slug
-        front_url = f"{BASEURLFRONT}/blanes/{slug}"
-        front_response = httpx.get(front_url, headers=headers)
-        front_response.raise_for_status()
-        detailed_blane = front_response.json().get("data", {})
-
-        available_periods = detailed_blane.get("available_periods", [])
-        available_periods = [p for p in available_periods if p.get("available")]
-
-        if not available_periods:
-            return f"No available periods found for '{blane['name']}'."
-
-        output = [f"📅 Available Periods for '{blane['name']}':"]
-        for period in available_periods:
-            output.append(
-                f"- {period['period_name']} → {period['remainingCapacity']} spots"
-            )
-
-        return "\n".join(output)
-
-    except httpx.HTTPStatusError as e:
-        return f"❌ HTTP Error {e.response.status_code}: {e.response.text}"
-    except Exception as e:
-        return f"❌ Error fetching periods: {str(e)}"
 
 
 @tool("blanes_info")
@@ -725,631 +417,6 @@ def get_blane_info(blane_id: int):
         return f"❌ HTTP Error {e.response.status_code}: {e.response.text}"
 
 
-@tool("before_create_reservation")
-def prepare_reservation_prompt(blane_id: int) -> str:
-    """
-    This tool will prepare a reservation prompt for a specific blane. Run this tool before `create_reservation`.
-    Returns a dynamic WhatsApp-style prompt with date/time or general info needed to make a reservation for a blane.
-    """
-    from datetime import datetime, timedelta
-    import httpx
-
-    token = get_token()
-    if not token:
-        return "❌ Failed to retrieve token."
-
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-
-    try:
-        res = httpx.get(f"{BASEURLBACK}/blanes/{blane_id}", headers=headers)
-        res.raise_for_status()
-        # blane = next((b for b in res.json()["data"] if b["id"] == blane_id), None)
-        blane = res.json()["data"]
-        if not blane:
-            return f"❌ Blane with ID {blane_id} not found."
-    except Exception as e:
-        return f"❌ Error fetching blane: {e}"
-
-    # Determine blane details
-    name = blane.get("name", "Unknown")
-    type_time = blane.get("type_time")  # 'time' or 'date'
-    is_reservation = blane.get("type") == "reservation"
-    is_order = blane.get("type") == "order"
-
-    start = format_date(blane.get("start_date", ""))
-    end = format_date(blane.get("expiration_date", ""))
-    date_range = f"{start} to {end}" if start and end else "Unknown"
-
-    # Generate time slots if applicable
-    slots = ""
-    if is_reservation and type_time == "time":
-        try:
-            heure_debut_str = blane["heure_debut"]
-            heure_fin_str = blane["heure_fin"]
-            interval = int(blane["intervale_reservation"])
-
-            for fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%H:%M:%S"):
-                try:
-                    heure_debut = datetime.strptime(heure_debut_str, fmt).time()
-                    heure_fin = datetime.strptime(heure_fin_str, fmt).time()
-                    break
-                except ValueError:
-                    continue
-            else:
-                return "❌ Could not parse blane time format."
-
-            current = datetime.combine(datetime.today(), heure_debut)
-            end_dt = datetime.combine(datetime.today(), heure_fin)
-            time_slots = []
-            while current <= end_dt:
-                time_slots.append(current.strftime("%H:%M"))
-                current += timedelta(minutes=interval)
-            slots = ", ".join(time_slots)
-        except Exception:
-            slots = "Invalid time format"
-
-    # Build prompt dynamically
-    msg = f"To proceed with your reservation for the blane *{name}*, I need the following details:\n\n"
-    msg = f"*1. User Name*:\n"
-    msg = f"*2. Email*:\n"
-    msg += f"3. *Phone Number*:\n"
-    msg += f"4. *City*:\n"
-
-    if is_order:
-        msg += f"5. *Quantity*: (How many units?)\n"
-        msg += f"6. *Delivery Address*: (Place where order has to be delivered)\n"
-        msg += f"7. *Comments*: (Any special instructions?)\n"
-    elif is_reservation and type_time == "time":
-        msg += f"5. *Date*: (Available: {date_range}) Date Format: YYYY-MM-DD\n"
-        msg += f"6. *Time*: (Available slots: {slots}) Time Format: HH:MM\n"
-        msg += f"7. *Quantity*: (How many units?)\n"
-        msg += f"8. *Number of Persons*: (People attending)\n"
-        msg += f"9. *Comments*: (Any requests?)\n"
-    elif is_reservation and type_time == "date":
-        msg += f"5. *Start Date*: (Between {date_range}) Date Format: YYYY-MM-DD\n"
-        msg += f"6. *End Date*: (Between {date_range}) Date Format: YYYY-MM-DD\n"
-        msg += f"7. *Quantity*: (How many units?)\n"
-        msg += f"8. *Number of Persons*: (People attending)\n"
-        msg += f"9. *Comments*: (Any requests?)\n"
-
-    return msg.strip()
-
-
-@tool("create_reservation")
-def create_reservation(
-    session_id: str,
-    blane_id: int,
-    name: str = "N/A",
-    email: str = "N/A",
-    phone: str = "N/A",
-    city: str = "N/A",
-    date: str = "N/A",
-    end_date: str = "N/A",
-    time: str = "N/A",
-    quantity: int = 1,
-    number_persons: int = 1,
-    delivery_address: str = "N/A",
-    comments: str = "N/A",
-) -> str:
-    """
-    Handles reservation or order creation. Must run `before_create_reservation` first.
-    """
-    from datetime import datetime, timedelta
-    import httpx
-
-    token = get_token()
-    if not token:
-        return "❌ Failed to retrieve token."
-
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-
-    # Fetch blane details
-    try:
-        res = httpx.get(f"{BASEURLBACK}/blanes/{blane_id}", headers=headers)
-        res.raise_for_status()
-        blane = res.json()["data"]
-        if not blane:
-            return f"❌ Blane with ID {blane_id} not found."
-    except Exception as e:
-        return f"❌ Error fetching blane: {e}"
-
-    # Database session management
-    db = SessionLocal()
-    try:
-        # Get session from database
-        session = db.query(Session).filter_by(id=session_id).first()
-        if not session:
-            return f"❌ Session with ID {session_id} not found."
-
-        # ✅ CORRECTED EMAIL VALIDATION LOGIC
-        current_email = None
-
-        # Check if email is provided in the function call
-        if email != "N/A" and email.strip():
-            current_email = email.strip()
-            # Update session with the provided email if not already set
-            if not session.client_email:
-                session.client_email = current_email
-                db.commit()
-        # If no email provided in function call, check session
-        elif session.client_email and session.client_email.strip():
-            current_email = session.client_email.strip()
-
-        # If still no email found, request it
-        if not current_email:
-            return "📧 Please provide your email address to create the reservation. I need this to send you the booking confirmation."
-
-        # Validate email format (basic validation)
-        if "@" not in current_email or "." not in current_email.split("@")[1]:
-            return "❌ Please provide a valid email address format (e.g., user@example.com)."
-
-        # Continue with the rest of your reservation logic...
-        blane_type = blane.get("type")
-        type_time = blane.get("type_time")
-        base_price = float(blane.get("price_current", 0))
-        total_price = base_price * quantity
-
-        # 🔸 Handle Delivery Cost (for orders)
-        if blane_type == "order" and not blane.get("is_digital"):
-            if blane.get("city") != city:
-                total_price += float(blane.get("livraison_out_city", 0))
-            else:
-                total_price += float(blane.get("livraison_in_city", 0))
-
-        # 🔸 Determine supported payment options from blane
-        supports_online = bool(blane.get("online"))
-        supports_partiel = bool(blane.get("partiel"))
-        supports_cash = bool(blane.get("cash"))
-
-        # 🔸 Choose payment route: prefer partial if available, else full online, else cash
-        payment_route = "cash"
-        if supports_partiel:
-            payment_route = "partiel"
-        elif supports_online:
-            payment_route = "online"
-        elif supports_cash:
-            payment_route = "cash"
-
-        # 🔸 Handle Partial Payments amount
-        partiel_price = 0
-        if payment_route == "partiel" and blane.get("partiel_field"):
-            percent = float(blane["partiel_field"])
-            partiel_price = round((percent / 100) * total_price)
-
-        # 🔸 Validate reservation date
-        today = datetime.today().date()
-        if date != "N/A":
-            try:
-                date_obj = datetime.strptime(date, "%Y-%m-%d").date()
-                if date_obj < today:
-                    return f"❌ Reservation date {date} must not be in the past."
-            except Exception:
-                return f"❌ Invalid date format. Use YYYY-MM-DD."
-
-        # 🔸 Reservation Logic
-        if blane_type == "reservation":
-            jours_open = blane.get("jours_creneaux", [])
-            user_day = datetime.strptime(date, "%Y-%m-%d").strftime("%A")
-            user_day_fr = {
-                "Monday": "Lundi",
-                "Tuesday": "Mardi",
-                "Wednesday": "Mercredi",
-                "Thursday": "Jeudi",
-                "Friday": "Vendredi",
-                "Saturday": "Samedi",
-                "Sunday": "Dimanche",
-            }.get(user_day, "")
-
-            if jours_open and user_day_fr not in jours_open:
-                return f"🚫 This blane is closed on {user_day}."
-
-            if type_time == "time":
-                heure_debut = parse_time_only(blane["heure_debut"])
-                heure_fin = parse_time_only(blane["heure_fin"])
-                try:
-                    slot_time = datetime.strptime(time, "%H:%M").time()
-                except:
-                    return "❌ Invalid time format. Use HH:MM."
-
-                # Check time is in valid slots
-                current = datetime.combine(datetime.today(), heure_debut)
-                end_dt = datetime.combine(datetime.today(), heure_fin)
-                interval = int(blane["intervale_reservation"])
-                valid_slots = []
-
-                while current < end_dt:  # ✅ Fixed: use < instead of <=
-                    valid_slots.append(current.strftime("%H:%M"))
-                    current += timedelta(minutes=interval)
-
-                if time not in valid_slots:
-                    return f"🕓 Invalid time. Choose from: {', '.join(valid_slots)}"
-
-            elif type_time == "date":
-                try:
-                    start = parse_datetime(blane.get("start_date"))
-                    end = parse_datetime(blane.get("expiration_date"))
-                    user_date = datetime.strptime(date, "%Y-%m-%d")
-                    user_end_date = datetime.strptime(end_date, "%Y-%m-%d")
-                    if not (start.date() <= user_date.date() <= end.date()):
-                        return f"❌ Start date must be within {start.date()} to {end.date()}"
-                    if not (start.date() <= user_end_date.date() <= end.date()):
-                        return (
-                            f"❌ End date must be within {start.date()} to {end.date()}"
-                        )
-                except:
-                    return "❌ Invalid start or end date format."
-
-            payload = {
-                "blane_id": blane_id,
-                "name": name,
-                "email": current_email,  # ✅ Use validated email
-                "phone": phone,
-                "city": city,
-                "date": date,
-                "end_date": end_date if type_time == "date" else None,
-                "time": time if type_time == "time" else None,
-                "quantity": quantity,
-                "number_persons": number_persons,
-                "payment_method": payment_route,
-                "status": "pending",
-                "total_price": total_price - partiel_price,
-                "partiel_price": partiel_price,
-                "comments": comments,
-            }
-
-        # 🔸 Order Logic
-        elif blane_type == "order":
-            if not delivery_address or delivery_address == "N/A":
-                return "📦 Please provide a valid delivery address."
-
-            payload = {
-                "blane_id": blane_id,
-                "name": name,
-                "email": current_email,  # ✅ Use validated email
-                "phone": phone,
-                "city": city,
-                "delivery_address": delivery_address,
-                "quantity": quantity,
-                "payment_method": payment_route,
-                "status": "pending",
-                "total_price": total_price - partiel_price,
-                "partiel_price": partiel_price,
-                "comments": comments,
-            }
-
-        else:
-            return "❌ Unknown blane type. Only 'reservation' or 'order' supported."
-
-        # 🔸 Create Reservation or Order
-        try:
-            API = ""
-            if blane_type == "reservation":
-                API = f"{BASEURLFRONT}/reservations"
-            elif blane_type == "order":
-                API = f"{BASEURLFRONT}/orders"
-
-            res = httpx.post(f"{API}", headers=headers, json=payload)
-            res.raise_for_status()
-            data = res.json()
-
-            # If online or partial payment is selected/supported, initiate payment and return URL
-            if payment_route in ("online", "partiel"):
-                # Extract reference from response payload: data.data.NUM_RES or data.data.NUM_ORD
-                reference = None
-                try:
-                    nested = data.get("data") if isinstance(data, dict) else None
-                    if isinstance(nested, dict):
-                        reference = nested.get("NUM_RES") or nested.get("NUM_ORD")
-                except Exception:
-                    reference = None
-
-                if reference:
-                    try:
-                        pay_url = f"{BASEURLFRONT}/payment/cmi/initiate"
-                        pay_res = httpx.post(
-                            pay_url, headers=headers, json={"number": reference}
-                        )
-                        pay_res.raise_for_status()
-                        pay_data = pay_res.json()
-                        if pay_data.get("status") and pay_data.get("payment_url"):
-                            return f"✅ Created. Ref: {reference}. 💳 Pay here: {pay_data.get('payment_url')}"
-                        else:
-                            return f"✅ Success! {data}. Payment initiation: {pay_data}"
-                    except Exception as e:
-                        return f"✅ Success! {data}, but payment link failed: {str(e)}"
-
-            # Cash/offline flow
-            return f"✅ Success! {data}"
-        except Exception as e:
-            return f"❌ Error submitting reservation: {str(e)}"
-
-    except Exception as e:
-        db.rollback()
-        return f"❌ Database error: {str(e)}"
-    finally:
-        db.close()
-
-
-@tool("preview_reservation")
-def preview_reservation(
-    session_id: str,
-    blane_id: int,
-    name: str = "N/A",
-    email: str = "N/A",
-    phone: str = "N/A",
-    city: str = "N/A",
-    date: str = "N/A",
-    end_date: str = "N/A",
-    time: str = "N/A",
-    quantity: int = 1,
-    number_persons: int = 1,
-    delivery_address: str = "N/A",
-    comments: str = "N/A",
-) -> str:
-    """
-    Prepare a booking recap with dynamic price calculation (including delivery and partial payments) WITHOUT creating it.
-    Shows a confirmation prompt with Buttons: [Confirm] [Edit] [Cancel].
-    """
-    from datetime import datetime, timedelta
-    import httpx
-
-    token = get_token()
-    if not token:
-        return "❌ Failed to retrieve token. Please try again later."
-
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-
-    # Fetch blane
-    try:
-        res = httpx.get(f"{BASEURLBACK}/blanes/{blane_id}", headers=headers)
-        res.raise_for_status()
-        blane = res.json().get("data", {})
-        if not blane:
-            return f"❌ Blane with ID {blane_id} not found."
-    except Exception as e:
-        return f"❌ Error fetching blane: {e}"
-
-    blane_type = blane.get("type")
-    type_time = blane.get("type_time")
-
-    # Pricing
-    try:
-        base_price = float(blane.get("price_current", 0))
-    except Exception:
-        base_price = 0.0
-    total_price = base_price * max(1, int(quantity))
-
-    # Delivery for physical orders
-    delivery_cost = 0.0
-    if blane_type == "order" and not blane.get("is_digital"):
-        if blane.get("city") != city:
-            delivery_cost = float(blane.get("livraison_out_city", 0))
-        else:
-            delivery_cost = float(blane.get("livraison_in_city", 0))
-        total_price += delivery_cost
-
-    # Payment route
-    supports_online = bool(blane.get("online"))
-    supports_partiel = bool(blane.get("partiel"))
-    supports_cash = bool(blane.get("cash"))
-
-    payment_route = "cash"
-    if supports_partiel:
-        payment_route = "partiel"
-    elif supports_online:
-        payment_route = "online"
-    elif supports_cash:
-        payment_route = "cash"
-
-    # Partial amount
-    partiel_percent = None
-    partiel_price = 0
-    if payment_route == "partiel" and blane.get("partiel_field"):
-        try:
-            partiel_percent = float(blane.get("partiel_field"))
-            partiel_price = round((partiel_percent / 100) * total_price)
-        except Exception:
-            partiel_percent = None
-            partiel_price = 0
-
-    # Validate date/time inputs for reservation
-    try:
-        if blane_type == "reservation":
-            if type_time == "time":
-                # validate date
-                if date and date != "N/A":
-                    _ = datetime.strptime(date, "%Y-%m-%d")
-                else:
-                    return "❌ Please provide a date (YYYY-MM-DD)."
-                # validate time
-                if time and time != "N/A":
-                    _ = datetime.strptime(time, "%H:%M")
-                else:
-                    return "❌ Please provide a time (HH:MM)."
-            elif type_time == "date":
-                if not (date and end_date and date != "N/A" and end_date != "N/A"):
-                    return "❌ Please provide start and end dates (YYYY-MM-DD)."
-                _ = datetime.strptime(date, "%Y-%m-%d")
-                _ = datetime.strptime(end_date, "%Y-%m-%d")
-    except Exception:
-        return "❌ Invalid date or time format."
-
-    # Build recap
-    blane_name = blane.get("name", "Unknown")
-    lines = [
-        "Great. I'll need the booking info.",
-        "",
-        f"Please review:",
-        f"- Blane: {blane_name}",
-    ]
-
-    if blane_type == "reservation":
-        if type_time == "time":
-            lines += [
-                f"- Date: {date}",
-                f"- Time: {time}",
-            ]
-        else:
-            lines += [
-                f"- Start Date: {date}",
-                f"- End Date: {end_date}",
-            ]
-        lines += [
-            f"- Quantity: {quantity}",
-            f"- Persons: {number_persons}",
-        ]
-    else:
-        lines += [
-            f"- Quantity: {quantity}",
-        ]
-        if delivery_address and delivery_address != "N/A":
-            lines.append(f"- Delivery Address: {delivery_address}")
-
-    lines += [
-        f"- City: {city}",
-        f"- Payment: {'Partial' if payment_route=='partiel' else ('Online' if payment_route=='online' else 'Cash')}",
-    ]
-
-    if blane_type == "order" and not blane.get("is_digital"):
-        lines.append(f"- Delivery Cost: {int(delivery_cost)} MAD")
-
-    lines.append(f"- Total: {int(total_price)} MAD")
-    if payment_route == "partiel" and partiel_price:
-        lines.append(f"- Due now (partial): {int(partiel_price)} MAD")
-    elif payment_route == "online":
-        lines.append(f"- Due now: {int(total_price)} MAD")
-
-    lines += [
-        "",
-        "Confirm booking?",
-        "Buttons: [Confirm] [Edit] [Cancel]",
-    ]
-
-    return "\n".join(lines)
-
-
-@tool("list_reservations")
-def list_reservations(email: str) -> str:
-    """
-    Get the list of the authenticated user's reservations.
-    Requires user's email.
-    """
-
-    token = get_token()
-    if not token:
-        return {"error": "❌ Failed to retrieve token."}
-
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-
-    result = {"reservations": [], "orders": []}
-
-    # Fetch Reservations
-    res_url = f"{BASEURLBACK}/reservations?email={email}"
-    res_response = requests.get(res_url, headers=headers)
-    if res_response.status_code == 200:
-        result["reservations"] = res_response.json().get("data", [])
-    else:
-        result["reservations_error"] = res_response.text
-
-    # Fetch Orders
-    orders_url = f"{BASEURLBACK}/orders?email={email}"
-    orders_response = requests.get(orders_url, headers=headers)
-    if orders_response.status_code == 200:
-        result["orders"] = orders_response.json().get("data", [])
-    else:
-        result["orders_error"] = orders_response.text
-
-    return result
-
-
-district_map = {
-    "anfa": [
-        "bourgogne",
-        "sidi belyout",
-        "centre ville",
-        "médina",
-        "maârif",
-        "ain diab",
-        "corniche",
-        "gauthier",
-        "racine",
-        "palmier",
-        "triangle d'or",
-        "oasis",
-        "cil",
-    ],
-    "hay hassani": ["hay hassani", "oulfa", "errahma", "lissasfa"],
-    "aïn chock": ["aïn chock", "sidi maârouf", "californie", "polo"],
-    "aïn sebaâ – hay mohammadi": [
-        "aïn sebaâ",
-        "hay mohammadi",
-        "roches noires",
-        "belvédère",
-    ],
-    "al fida – mers sultan": ["al fida", "mers sultan", "derb sultan", "habous"],
-    "sidi bernoussi – sidi moumen": ["sidi bernoussi", "sidi moumen", "zenata"],
-    "moulay rachid – ben m'sick": [
-        "moulay rachid",
-        "sidi othmane",
-        "ben m'sick",
-        "sbata",
-    ],
-    "surroundings": [
-        "bouskoura",
-        "la ville verte",
-        "dar bouazza",
-        "mohammedia",
-        "bouznika",
-    ],
-}
-
-
-def _normalize_location_text(text: str) -> str:
-    """
-    Normalize location text for better matching.
-    """
-    return text.lower().strip()
-
-
-@tool("introduction_message")
-def introduction_message() -> str:
-    """
-    Returns the introduction message for DabaBlane AI booking assistant.
-
-    Use this tool when:
-    - User sends greeting messages like "hello", "hi", "salam", "assalam o alaikum"
-    - User asks "what can you do" or "help me"
-    - User starts a new conversation
-    - User asks about the bot's capabilities or services
-    - User sends any initial greeting or inquiry about services
-
-    The tool provides a comprehensive introduction explaining:
-    - Bot identity as DabaBlane AI booking assistant
-    - Available services (finding blanes, checking availability, making reservations)
-    - Required information needed from users (category, city, district, sub-district, date)
-    - Friendly greeting response in local language (French/Roman)
-
-    Also when user says "Salam" in any form - respond with "Walikum Assalam" instead of Hello.
-    """
-
-    return """
-    Bonjour! Je suis *DabaBlane AI*, votre assistant de réservation intelligent. 🤖✨
-
-    Je peux vous aider à :
-    ‣   🔍 Trouver des *blanes* (par catégorie ou localisation)
-    ‣   📅 Vérifier la disponibilité
-    ‣   🛎️ Réserver un blane pour vous
-    ‣   💸 Vous guider dans le processus de paiement et de réservation
-
-    Pour vous montrer les meilleures options, j'aurai besoin de quelques détails :
-       ‣ *Catégorie* (par ex: Mobile & Tech, Ambiance d'été, Événements, Enfants, Loisirs, DabaBoss, Soins et Beauté, Nourriture & Boissons)
-       ‣ *Quartier (Si tu veux)*
-       ‣ *Ville*
-
-    Donnez-moi ces informations et je m'occupe du reste. 🚀
-    """
-
-
 @tool("check_message_relevance")
 def check_message_relevance(user_message: str) -> str:
     """
@@ -1373,113 +440,6 @@ def check_message_relevance(user_message: str) -> str:
 
     message_lower = user_message.lower().strip()
 
-    # Blane/business related keywords
-    blane_keywords = [
-        "blane",
-        "blanes",
-        "dabablane",
-        "reservation",
-        "booking",
-        "book",
-        "reserve",
-        "restaurant",
-        "spa",
-        "activity",
-        "massage",
-        "food",
-        "eat",
-        "dine",
-        "activities",
-        "entertainment",
-        "wellness",
-        "relax",
-        "casablanca",
-        "morocco",
-        "maroc",
-        "price",
-        "cost",
-        "available",
-        "time slot",
-        "appointment",
-        "order",
-        "delivery",
-        "table",
-        "treatment",
-        "service",
-        "deal",
-        "offer",
-        "discount",
-        "photo shoot",
-        "photography",
-        "studio",
-        "event",
-        "venue",
-        "location",
-    ]
-
-    # Location keywords
-    location_keywords = [
-        "anfa",
-        "hay hassani",
-        "ain chock",
-        "mers sultan",
-        "sidi bernoussi",
-        "moulay rachid",
-        "casablanca",
-        "morocco",
-        "maroc",
-        "near me",
-        "my area",
-        "district",
-        "neighbourhood",
-        "location",
-        "where",
-        "corniche",
-        "centre ville",
-        "medina",
-        "maârif",
-        "gauthier",
-    ]
-
-    # Greeting keywords
-    greeting_keywords = [
-        "hello",
-        "hi",
-        "hey",
-        "bonjour",
-        "salut",
-        "salam",
-        "good morning",
-        "good afternoon",
-        "good evening",
-        "how are you",
-        "start",
-        "begin",
-    ]
-
-    # Irrelevant keywords (clearly off-topic)
-    irrelevant_keywords = [
-        "weather",
-        "politics",
-        "news",
-        "stock market",
-        "crypto",
-        "bitcoin",
-        "programming",
-        "code",
-        "technical support",
-        "computer",
-        "software",
-        "medicine",
-        "health advice",
-        "legal advice",
-        "homework",
-        "study",
-        "recipe",
-        "cooking tutorial",
-        "travel outside morocco",
-    ]
-
     # Calculate relevance scores
     blane_score = sum(1 for keyword in blane_keywords if keyword in message_lower)
     location_score = sum(1 for keyword in location_keywords if keyword in message_lower)
@@ -1492,7 +452,7 @@ def check_message_relevance(user_message: str) -> str:
     total_positive = blane_score + location_score + greeting_score
 
     if irrelevant_score > 0 and total_positive == 0:
-        return "irrelevant: I'm Dabablane AI, specialized in helping with blane reservations, bookings, and finding activities, restaurants, and spa services in Casablanca. How can I help you with that?"
+        return "irrelevant: I'm DabaGPT, specialized in helping with blane reservations, bookings, and finding activities, restaurants, and spa services in Casablanca. How can I help you with that?"
 
     if greeting_score > 0:
         return "greeting"
@@ -1517,45 +477,13 @@ def check_message_relevance(user_message: str) -> str:
         return "relevant"
 
     # Default to irrelevant
-    return "irrelevant: I'm Dabablane AI, specialized in blane reservations and bookings. I can help you find restaurants, spas, activities, and more in Casablanca. What interests you?"
+    return "irrelevant: I'm DabaGPT, specialized in blane reservations and bookings. I can help you find restaurants, spas, activities, and more in Casablanca. What interests you?"
 
 
 @tool("list_districts_and_subdistricts")
 def list_districts_and_subdistricts() -> str:
     """Lists all districts and sub districts."""
     return district_map
-
-
-def list_categories_func() -> str:
-    """
-    Get all available categories with their IDs and names.
-
-    Returns:
-        dict: Dictionary mapping category IDs to category names
-    """
-    token = get_token()
-    if not token:
-        return "❌ Failed to retrieve token. Please try again later."
-
-    url = f"{BASEURLBACK}/categories"
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-
-    try:
-        response = httpx.get(url, headers=headers)
-        response.raise_for_status()
-        data = response.json()
-
-        categories = data.get("data", [])
-        result = {cat["id"]: cat["name"] for cat in categories}
-
-        return result
-
-    except httpx.HTTPStatusError as e:
-        print(f"❌ HTTP Error {e.response.status_code}: {e.response.text}")
-        return {}
-    except Exception as e:
-        print(f"❌ Error: {str(e)}")
-        return {}
 
 
 @tool("list_blanes_by_location_and_category")
@@ -1589,14 +517,14 @@ def list_blanes_by_location_and_category(
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
     # Normalize input filters
-    city_norm = _normalize_location_text(city)
-    district_norm = _normalize_location_text(district)
-    sub_district_norm = _normalize_location_text(sub_district)
+    city_norm = normalize_text(city)
+    district_norm = normalize_text(district)
+    sub_district_norm = normalize_text(sub_district)
     category_norm = ""
     if category:
-        category_norm = category.lower().strip()
+        category_norm = normalize_text(category)
     else:
-        categories = list_categories_func()
+        categories = _list_categories()
         available_categories = list(categories.values())
         return f"Please provide a category. Available categories: {', '.join(available_categories)}"
 
@@ -1604,7 +532,7 @@ def list_blanes_by_location_and_category(
     category_id = None
     if category_norm:
         try:
-            categories = list_categories_func()
+            categories = _list_categories()
             if isinstance(categories, dict):
                 # Find category ID by matching category name (case-insensitive)
                 for cat_id, cat_name in categories.items():
@@ -1690,7 +618,7 @@ def list_blanes_by_location_and_category(
     district_subs = []
     if district_norm:
         district_subs = [
-            _normalize_location_text(sub) for sub in district_map.get(district_norm, [])
+            normalize_text(sub) for sub in district_map.get(district_norm, [])
         ]
 
     # Filter blanes based on location criteria (category already filtered by API)
@@ -1699,10 +627,10 @@ def list_blanes_by_location_and_category(
     for blane in all_blanes:
         name = blane.get("name") or ""
         description = blane.get("description") or ""
-        blane_city = _normalize_location_text(blane.get("city") or "")
+        blane_city = normalize_text(blane.get("city") or "")
 
         # Create searchable text
-        searchable_text = _normalize_location_text(f"{name} {description}")
+        searchable_text = normalize_text(f"{name} {description}")
 
         # Apply city filter
         passes_city_filter = not city_norm or city_norm in blane_city
@@ -1920,3 +848,162 @@ def find_blanes_by_name_or_link(
             lines.append(f"{idx} - {name} (blane_id: {blane_id})")
 
     return "\n".join(lines)
+
+
+@tool("search_blanes_advanced")
+def search_blanes_advanced(
+    session_id: str, keywords: str, min_relevance: float = 0.9
+) -> str:
+    """
+    An AI-powered semantic search tool that finds relevant "blanes" (services/providers) based on user keywords and intent, with configurable relevance scoring.
+    When to Use This Tool
+    Call this tool when users ask queries similar to:
+    Service Discovery Queries
+
+    "Show me blanes related to photoshoot" (keyword: photoshoot)
+    "I need photographers for my wedding" (keyword: wedding photography)
+    "Find me spa services" (keyword: spa)
+    "Looking for catering options" (keyword: catering)
+
+    Business/Project Needs
+
+    "I want to create a website, suggest me something?" (keyword: website creation)
+    "Help me find marketing services" (keyword: marketing)
+    "I need event planning assistance" (keyword: event planning)
+    "Looking for graphic design services" (keyword: graphic design)
+
+    General Service Exploration
+
+    "What blanes do you have for restaurants?" (keyword: restaurants)
+    "Show me fitness-related services" (keyword: fitness)
+    "Find me beauty and wellness providers" (keyword: beauty wellness)
+    "I need home improvement services" (keyword: home improvement)
+
+    Key Features
+
+    AI-Powered Matching: Uses gpt-4o for semantic understanding
+    Relevance Scoring: Configurable minimum relevance threshold (0.0-1.0)
+    Multi-Criteria Analysis: Considers direct matches, semantic similarity, and contextual relevance
+    Detailed Explanations: Provides reasoning for each match
+
+    Input Parameters
+
+    session_id: Unique identifier for the search session
+    keywords: The search terms or user intent (extracted from user query)
+    min_relevance: Optional threshold (default 0.5) - higher values return fewer, more precise results
+
+    Scoring System
+
+    0.9-1.0: Perfect match, exactly what user wants
+    0.7-0.8: Very relevant, strong semantic connection
+    0.5-0.6: Moderately relevant, related services
+    0.3-0.4: Weakly related, might be useful
+    Below 0.3: Not relevant (filtered out)
+    """
+    from langchain_openai import ChatOpenAI
+    import json
+
+    if not 0.0 <= min_relevance <= 1.0:
+        min_relevance = 0.5
+
+    # Get all blanes
+    all_blanes_data = get_all_blanes_simple()
+    if not all_blanes_data:
+        return "❌ Failed to retrieve blanes data"
+
+    # Prepare data for AI analysis
+    blanes_info = []
+    for blane in all_blanes_data:
+        blane_entry = {
+            "id": blane.get("id", "Unknown"),
+            "title": blane.get("name", "Unknown"),
+            "description": blane.get("description", ""),
+            "category": blane.get("category", ""),
+            "type": blane.get("type", ""),
+        }
+        blanes_info.append(blane_entry)
+
+    try:
+        # Initialize OpenAI model (same as BookingToolAgent)
+        llm = ChatOpenAI(model="gpt-4o", temperature=0)
+
+        # Create advanced AI prompt
+        ai_prompt = f"""You are an expert at semantic matching of services with user search intent.
+
+                        TASK: Find blanes highly relevant to: "{keywords}" with minimum relevance of {min_relevance}
+
+                        BLANES DATA:
+                        {json.dumps(blanes_info, indent=2)}
+
+                        ANALYSIS CRITERIA:
+                        1. Direct keyword matches in title/description (high score)
+                        2. Semantic similarity and related concepts (medium score)
+                        3. Contextual relevance (e.g., wedding → photography, catering)
+                        4. Industry connections and complementary services
+
+                        SCORING GUIDE:
+                        - 0.9-1.0: Perfect match, exactly what user wants
+                        - 0.7-0.8: Very relevant, strong semantic connection
+                        - 0.5-0.6: Moderately relevant, related services
+                        - 0.3-0.4: Weakly related, might be useful
+                        - Below 0.3: Not relevant
+
+                        Return ONLY JSON array with scores >= {min_relevance}:
+                        [
+                            {{"id": "blane_id", "title": "blane_title", "relevance_score": 0.85, "reason": "detailed explanation"}}
+                        ]
+
+                        If no matches meet the threshold, return []"""
+
+        # Get AI response
+        response = llm.invoke(ai_prompt)
+        ai_content = response.content.strip()
+
+        # Parse JSON response
+        try:
+            if ai_content.startswith("```json"):
+                ai_content = (
+                    ai_content.replace("```json", "").replace("```", "").strip()
+                )
+            elif ai_content.startswith("```"):
+                ai_content = ai_content.replace("```", "").strip()
+
+            relevant_blanes = json.loads(ai_content)
+
+            if not isinstance(relevant_blanes, list):
+                raise ValueError("AI response is not a list")
+
+        except (json.JSONDecodeError, ValueError) as e:
+            # Fallback to rule-based matching
+            print(f"AI parsing failed: {e}, using fallback")
+            # relevant_blanes = analyze_blanes_with_ai("", keywords, blanes_info)
+            # relevant_blanes = [b for b in relevant_blanes if b.get('relevance_score', 0) >= min_relevance]
+
+        if not relevant_blanes:
+            return f"❌ No blanes found with relevance >= {min_relevance} for keywords: '{keywords}'"
+
+        # Format output
+        output = [f"🎯 Advanced Search Results (Session: {session_id})"]
+        output.append(f"Keywords: '{keywords}' | Min Relevance: {min_relevance}")
+        output.append(f"Found {len(relevant_blanes)} highly relevant blanes:")
+        output.append("")
+
+        for i, blane in enumerate(relevant_blanes, 1):
+            score = blane.get("relevance_score", 0)
+            reason = blane.get("reason", "Meets relevance criteria")
+
+            score_emoji = (
+                "🎯"
+                if score >= 0.9
+                else "🔥" if score >= 0.8 else "✨" if score >= 0.7 else "💫"
+            )
+
+            output.append(f"{i}. {score_emoji} {blane['title']} (ID: {blane['id']})")
+            # output.append(f"   📊 Score: {score:.2f}/1.0")
+            output.append(f"   💡 {reason}")
+            output.append("")
+
+        return "\n".join(output)
+
+    except Exception as e:
+        return f"❌ Error in advanced search: {str(e)}"

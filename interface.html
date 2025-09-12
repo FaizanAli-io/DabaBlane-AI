@@ -93,12 +93,9 @@
         <div class="col-md-8 mb-2">
           <label for="sessionId" class="form-label">Session ID</label>
           <div class="d-flex">
-            <input
-              type="text"
-              id="sessionId"
-              class="form-control"
-              value="f2962aa0-e873-47d6-8f80-28e6b2c82692"
-            />
+            <select id="sessionId" class="form-select">
+              <option value="">Select a session...</option>
+            </select>
             <button
               id="clearHistoryBtn"
               class="btn btn-outline-danger ms-2"
@@ -128,7 +125,37 @@
       const chatForm = document.getElementById("chatForm");
       const messageInput = document.getElementById("messageInput");
       const envSelect = document.getElementById("envSelect");
-      const sessionIdInput = document.getElementById("sessionId");
+      const sessionIdSelect = document.getElementById("sessionId");
+
+      async function loadSessions() {
+        const baseUrl = envSelect.value;
+        try {
+          const res = await fetch(`${baseUrl}/session/list`);
+          const sessions = await res.json();
+
+          // Clear existing options except the first one
+          sessionIdSelect.innerHTML = '<option value="">Select a session...</option>';
+
+          // Add sessions to dropdown
+          if (Array.isArray(sessions)) {
+            sessions.forEach((session) => {
+              const option = document.createElement("option");
+              option.value = session.id || session;
+              option.textContent = `${session.id || session} ${
+                session.client_email ? "(" + session.client_email + ")" : ""
+              }`;
+              sessionIdSelect.appendChild(option);
+            });
+          }
+        } catch (error) {
+          console.error("Error loading sessions:", error);
+          // Add a default session if loading fails
+          const option = document.createElement("option");
+          option.value = "f2962aa0-e873-47d6-8f80-28e6b2c82692";
+          option.textContent = "f2962aa0-e873-47d6-8f80-28e6b2c82692 (default)";
+          sessionIdSelect.appendChild(option);
+        }
+      }
 
       function appendMessage(sender, text) {
         const div = document.createElement("div");
@@ -143,7 +170,9 @@
 
       function loadChatHistory() {
         chatHistory.innerHTML = "";
-        const session_id = sessionIdInput.value.trim();
+        const session_id = sessionIdSelect.value.trim();
+        if (!session_id) return;
+
         const baseUrl = envSelect.value;
         fetch(`${baseUrl}/chat/history/${session_id}`)
           .then((res) => res.json())
@@ -153,19 +182,29 @@
             }
           })
           .catch(() => {
-            appendMessage("bot", "[Error loading chat history]");
+            console.error("Error loading chat history");
           });
       }
 
-      // Load chat history on page load and when session/env changes
-      window.addEventListener("DOMContentLoaded", loadChatHistory);
-      sessionIdInput.addEventListener("change", loadChatHistory);
-      envSelect.addEventListener("change", loadChatHistory);
+      // Load sessions and chat history on page load and when env changes
+      window.addEventListener("DOMContentLoaded", async function () {
+        await loadSessions();
+        loadChatHistory();
+      });
+      sessionIdSelect.addEventListener("change", loadChatHistory);
+      envSelect.addEventListener("change", async function () {
+        await loadSessions();
+        loadChatHistory();
+      });
 
       // Clear chat history button
       const clearHistoryBtn = document.getElementById("clearHistoryBtn");
       clearHistoryBtn.addEventListener("click", async function () {
-        const session_id = sessionIdInput.value.trim();
+        const session_id = sessionIdSelect.value.trim();
+        if (!session_id) {
+          alert("Please select a session first");
+          return;
+        }
         const baseUrl = envSelect.value;
         try {
           const res = await fetch(`${baseUrl}/chat/history/${session_id}`, {
@@ -173,9 +212,8 @@
           });
           const data = await res.json();
           chatHistory.innerHTML = "";
-          appendMessage("bot", data.detail || "[History cleared]");
         } catch {
-          appendMessage("bot", "[Error clearing chat history]");
+          console.error("Error clearing chat history");
         }
       });
 
@@ -191,9 +229,15 @@
         e.preventDefault();
         const message = messageInput.value.trim();
         if (!message) return;
+
+        const session_id = sessionIdSelect.value.trim();
+        if (!session_id) {
+          alert("Please select a session first");
+          return;
+        }
+
         appendMessage("user", message);
         messageInput.value = "";
-        const session_id = sessionIdInput.value.trim();
         const baseUrl = envSelect.value;
         try {
           const res = await fetch(`${baseUrl}/chat`, {

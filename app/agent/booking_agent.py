@@ -8,65 +8,36 @@ from langchain.agents import AgentExecutor, create_tool_calling_agent
 from app.database import SessionLocal
 from app.chatbot.models import Session, Message
 
+from tools.auth import authenticate_email
+
 from tools.blanes import (
-    authenticate_email,
-    introduction_message,
     get_blane_info,
     list_categories,
-    search_blanes_advanced,
+    introduction_message,
     find_blanes_by_name_or_link,
     list_districts_and_subdistricts,
     list_blanes_by_location_and_category,
+    handle_user_pagination_response,
+    # search_blanes_advanced,
+)
+
+from tools.booking import (
     list_reservations,
     create_reservation,
     preview_reservation,
     prepare_reservation_prompt,
     get_available_periods,
     get_available_time_slots,
-    handle_user_pagination_response,
 )
 
 
+from tools.config import district_map
+
+
 load_dotenv()
-district_map = {
-    "anfa": [
-        "bourgogne",
-        "sidi belyout (centre ville, médina)",
-        "maârif",
-        "ain diab (corniche)",
-        "gauthier",
-        "racine",
-        "palmier",
-        "triangle d'or",
-        "oasis",
-        "cil",
-    ],
-    "hay hassani": ["hay hassani", "oulfa", "errahma", "lissasfa"],
-    "aïn chock": ["aïn chock", "sidi maârouf", "californie", "polo"],
-    "aïn sebaâ - hay mohammadi": [
-        "aïn sebaâ",
-        "hay mohammadi",
-        "roches noires (belvédère)",
-    ],
-    "al fida - mers sultan": ["al fida", "mers sultan", "derb sultan", "habous"],
-    "sidi bernoussi - sidi moumen": ["sidi bernoussi", "sidi moumen", "zenata"],
-    "moulay rachid - ben m'sick": [
-        "moulay rachid",
-        "sidi othmane",
-        "ben m'sick",
-        "sbata",
-    ],
-    "surroundings": [
-        "bouskoura",
-        "la ville verte",
-        "dar bouazza",
-        "mohammedia",
-        "bouznika",
-    ],
-}
 
 
-system_prompt = """Hi there! I'm *Dabablane AI* — your smart and talkative assistant who's always here for you. 😎  
+system_prompt = """Hi there! I'm *DabaGPT* — your smart and talkative assistant who's always here for you. 😎  
 Think of me as your tech-savvy buddy: I can help you make reservations and even find your booking details.  
 I'm powered by a special protocol called *RISEN* to stay secure, reliable, and super helpful.
 
