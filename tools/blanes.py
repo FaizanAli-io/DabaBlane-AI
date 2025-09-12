@@ -1342,8 +1342,8 @@ def introduction_message() -> str:
     ‣   💸 Vous guider dans le processus de paiement et de réservation
 
     Pour vous montrer les meilleures options, j'aurai besoin de quelques détails :
-       ‣ *Catégorie* (par ex: alimentation, technologie, loisirs, etc.)
-       ‣ *Quartier*
+       ‣ *Catégorie* (par ex: Mobile & Tech, Ambiance d'été, Événements, Enfants, Loisirs, DabaBoss, Soins et Beauté, Nourriture & Boissons)
+       ‣ *Quartier (Si tu veux)*
        ‣ *Ville*
 
     Donnez-moi ces informations et je m'occupe du reste. 🚀

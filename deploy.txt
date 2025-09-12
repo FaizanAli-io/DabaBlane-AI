@@ -5,4 +5,5 @@ cd DabaBlane-AI
 git pull
 
 sudo systemctl restart dabablane.service
+
 journalctl -u dabablane.service -f (logs)

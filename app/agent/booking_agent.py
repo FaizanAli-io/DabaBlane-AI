@@ -159,7 +159,7 @@ class BookingToolAgent:
             introduction_message,
             get_blane_info,
             list_categories,
-            search_blanes_advanced,
+            # search_blanes_advanced,
             find_blanes_by_name_or_link,
             list_districts_and_subdistricts,
             list_blanes_by_location_and_category,
