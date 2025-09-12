@@ -461,7 +461,7 @@ def list_blanes(start: int = 1, offset: int = 10) -> str:
         # output.append(f"\nWant more?\nButtons: [Show 10 more] [See details]")
     else:
         output.append(
-            "\nThat’s all in this district. Want me to suggest blanes in another district?"
+            "\nThat's all in this district. Want me to suggest blanes in another district?"
         )
     return "\n".join(output)
 
@@ -1177,7 +1177,7 @@ def preview_reservation(
     # Build recap
     blane_name = blane.get("name", "Unknown")
     lines = [
-        "Great. I’ll need the booking info.",
+        "Great. I'll need the booking info.",
         "",
         f"Please review:",
         f"- Blane: {blane_name}",
@@ -1329,44 +1329,25 @@ def introduction_message() -> str:
     - Required information needed from users (category, city, district, sub-district, date)
     - Friendly greeting response in local language (French/Roman)
 
-    Also use this when user says "salam" in any form - respond with "Walikum Assalam" instead of Hello.
-
+    Also when user says "Salam" in any form - respond with "Walikum Assalam" instead of Hello.
     """
-    message = """
+
+    return """
     Bonjour! Je suis *DabaBlane AI*, votre assistant de réservation intelligent. 🤖✨
 
     Je peux vous aider à :
-    ‣   🔍 Trouver des *blanes* (selon catégorie, ville, district et sous-district)
+    ‣   🔍 Trouver des *blanes* (par catégorie ou localisation)
     ‣   📅 Vérifier la disponibilité
     ‣   🛎️ Réserver un blane pour vous
     ‣   💸 Vous guider dans le processus de paiement et de réservation
 
-    Pour vous montrer les meilleures options, j’aurai besoin de quelques détails :
-       ‣ *Catégorie* (par ex: ferme, villa, appartement, etc.)
+    Pour vous montrer les meilleures options, j'aurai besoin de quelques détails :
+       ‣ *Catégorie* (par ex: alimentation, technologie, loisirs, etc.)
+       ‣ *Quartier*
        ‣ *Ville*
-       ‣ *District / Sous-district*
 
-    Donnez-moi ces informations et je m’occupe du reste. 🚀
+    Donnez-moi ces informations et je m'occupe du reste. 🚀
     """
-
-    message = """
-    Hello! I’m *DabaBlane AI*, your smart booking assistant. 🤖✨
-
-    I can help you with:
-    ‣   🔍 Finding *blanes* (by category, city, district, and sub-district)
-    ‣   📅 Checking availability
-    ‣   🛎️ Booking a blane for you
-    ‣   💸 Guiding you through the payment and reservation process
-
-    To show you the best options, I’ll need a few details:
-       ‣ *Category* (e.g., farm, villa, apartment, etc.)
-       ‣ *City*
-       ‣ *District / Sub-district*
-
-    Give me this information and I’ll take care of the rest. 🚀
-    """
-
-    return message
 
 
 @tool("check_message_relevance")
@@ -1716,9 +1697,9 @@ def list_blanes_by_location_and_category(
     matched_blanes = []
 
     for blane in all_blanes:
-        name = blane.get("name", "")
+        name = blane.get("name") or ""
         description = blane.get("description") or ""
-        blane_city = _normalize_location_text(blane.get("city", ""))
+        blane_city = _normalize_location_text(blane.get("city") or "")
 
         # Create searchable text
         searchable_text = _normalize_location_text(f"{name} {description}")
