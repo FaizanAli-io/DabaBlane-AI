@@ -96,6 +96,18 @@ def is_day_open(blane: Dict[str, Any], user_date: date) -> bool:
 # -----------------------------
 
 
+def get_payment_routes(blane: Dict[str, Any]) -> List[str]:
+    return [
+        method
+        for method, supported in {
+            "partiel": blane.get("partiel"),
+            "online": blane.get("online"),
+            "cash": blane.get("cash"),
+        }.items()
+        if supported
+    ] or ["cash"]
+
+
 def calculate_pricing(
     blane: Dict[str, Any], city: str, quantity: int
 ) -> Dict[str, Any]:
@@ -119,35 +131,24 @@ def calculate_pricing(
             delivery_cost = 0.0
         total += delivery_cost
 
-    supports_partiel = bool(blane.get("partiel"))
-    supports_online = bool(blane.get("online"))
-    supports_cash = bool(blane.get("cash"))
-
-    if supports_partiel:
-        payment_route = "partiel"
-    elif supports_online:
-        payment_route = "online"
-    elif supports_cash:
-        payment_route = "cash"
-    else:
-        payment_route = "cash"
+    payment_routes = get_payment_routes(blane)
 
     partiel_price = 0
-    partiel_percent = None
-    if payment_route == "partiel" and blane.get("partiel_field"):
+    partiel_percent = 0
+    if "partiel" in payment_routes and blane.get("partiel_field"):
         try:
-            partiel_percent = float(blane.get("partiel_field"))
+            partiel_percent = float(blane.get("partiel_field", 0) or 0)
             partiel_price = round((partiel_percent / 100.0) * total)
         except Exception:
             partiel_price = 0
 
     return {
-        "base_price": base_price,
-        "quantity": qty,
         "total": total,
+        "quantity": qty,
+        "base_price": base_price,
         "delivery_cost": delivery_cost,
-        "payment_route": payment_route,
         "partiel_price": partiel_price,
+        "payment_routes": payment_routes,
         "partiel_percent": partiel_percent,
     }
 
@@ -160,27 +161,31 @@ def calculate_pricing(
 def build_reservation_prompt(blane: Dict[str, Any]) -> str:
     name = blane.get("name", "Unknown")
     type_time = blane.get("type_time")
-    is_reservation = blane.get("type") == "reservation"
     is_order = blane.get("type") == "order"
+    is_digital = blane.get("is_digital", False)
+    is_reservation = blane.get("type") == "reservation"
 
     start = format_date(blane.get("start_date", ""))
     end = format_date(blane.get("expiration_date", ""))
     date_range = f"{start} to {end}" if start and end else "Unknown"
+
+    payment_routes = get_payment_routes(blane)
 
     lines: List[str] = [
         f"To proceed with your reservation for the blane *{name}*, I need the following details:\n"
     ]
 
     # Base fields (1-4)
-    lines.append("*1. User Name*:")
-    lines.append("*2. Email*:")
-    lines.append("*3. Phone Number*:")
-    lines.append("*4. City*:")
+    lines.append("*Name*:")
+    lines.append("*Email*:")
+    lines.append("*Phone Number*:")
+    lines.append("*City*:")
 
     if is_order:
-        lines.append("*5. Quantity*: (How many units?)")
-        lines.append("*6. Delivery Address*: (Place where order has to be delivered)")
-        lines.append("*7. Comments*: (Any special instructions?)")
+        lines.append("*Quantity*: (How many units?)")
+        lines.append("*Comments*: (Any special instructions?)")
+        if not is_digital:
+            lines.append("*Delivery Address*: (Place where order has to be delivered)")
 
     elif is_reservation and type_time == "time":
         slots = "Unknown"
@@ -202,18 +207,19 @@ def build_reservation_prompt(blane: Dict[str, Any]) -> str:
         except Exception:
             slots = "Invalid time format"
 
-        lines.append(f"*5. Date*: (Available: {date_range}) Date Format: YYYY-MM-DD")
-        lines.append(f"*6. Time*: (Available slots: {slots}) Time Format: HH:MM")
-        lines.append(f"*7. Quantity*: (How many units?)")
-        lines.append(f"*8. Number of Persons*: (People attending)")
-        lines.append(f"*9. Comments*: (Any requests?)")
+        lines.append(f"*Date*: (Available: {date_range}) Date Format: YYYY-MM-DD")
+        lines.append(f"*Time*: (Available slots: {slots}) Time Format: HH:MM")
+        lines.append(f"*Quantity*: (How many people attending?)")
+        lines.append(f"*Comments*: (Any requests?)")
 
     elif is_reservation and type_time == "date":
-        lines.append(f"*5. Start Date*: (Between {date_range}) Date Format: YYYY-MM-DD")
-        lines.append(f"*6. End Date*: (Between {date_range}) Date Format: YYYY-MM-DD")
-        lines.append(f"*7. Quantity*: (How many units?)")
-        lines.append(f"*8. Number of Persons*: (People attending)")
-        lines.append(f"*9. Comments*: (Any requests?)")
+        lines.append(f"*Start Date*: (Between {date_range}) Date Format: YYYY-MM-DD")
+        lines.append(f"*End Date*: (Between {date_range}) Date Format: YYYY-MM-DD")
+        lines.append(f"*Quantity*: (How many people attending?)")
+        lines.append(f"*Comments*: (Any requests?)")
+
+    lines.append(f"Payment methods available: {', '.join(payment_routes)}")
+    lines.append("Please specify your preferred payment method when booking.")
 
     return "\n".join(lines).strip()
 
@@ -369,9 +375,9 @@ def create_reservation(
     end_date: str = "N/A",
     time: str = "N/A",
     quantity: int = 1,
-    number_persons: int = 1,
-    delivery_address: str = "N/A",
     comments: str = "N/A",
+    delivery_address: str = "N/A",  # Only needed if not digital
+    payment_method: str = "cash",  # Must be one of: "cash", "partiel", "online"
 ) -> str:
     """
     Create a reservation or order for a specific blane, validating session, client info,
@@ -388,9 +394,10 @@ def create_reservation(
         end_date (str): End date for multi-day reservations. Default: "N/A".
         time (str): Reservation time (HH:MM). Default: "N/A".
         quantity (int): Number of units reserved or ordered. Default: 1.
-        number_persons (int): Number of persons for the reservation. Default: 1.
-        delivery_address (str): Address for delivery (orders only). Default: "N/A".
         comments (str): Optional notes for the booking. Default: "N/A".
+        delivery_address (str): Address for delivery (non-digital orders only). Default: "N/A".
+        payment_method (str): Payment method - must be "cash", "partiel", or "online". Default: "cash".
+
 
     Returns:
         str: A success message with payment information if applicable,
@@ -428,8 +435,14 @@ def create_reservation(
 
         pricing = calculate_pricing(blane, city, quantity)
 
+        # Validate chosen payment method
+        payment_routes = pricing["payment_routes"]
+        if payment_method not in payment_routes:
+            return f"❌ Unsupported payment method '{payment_method}'. Available: {', '.join(payment_routes)}"
+
         blane_type = blane.get("type")
         type_time = blane.get("type_time")
+        is_digital = blane.get("is_digital", False)
 
         today_date = datetime.today().date()
         if date and date != "N/A":
@@ -481,41 +494,38 @@ def create_reservation(
                 except Exception:
                     return "❌ Invalid start or end date format."
 
+        base_payload = {
+            "blane_id": blane_id,
+            "name": name,
+            "email": current_email,
+            "phone": phone,
+            "city": city,
+            "quantity": quantity,
+            "payment_method": payment_method,
+            "status": "pending",
+            "total_price": pricing["total"] - pricing.get("partiel_price", 0),
+            "partiel_price": pricing.get("partiel_price", 0),
+            "comments": comments,
+        }
+
         if blane_type == "reservation":
             payload = {
-                "blane_id": blane_id,
-                "name": name,
-                "email": current_email,
-                "phone": phone,
-                "city": city,
+                **base_payload,
                 "date": date,
                 "end_date": end_date if type_time == "date" else None,
                 "time": time if type_time == "time" else None,
-                "quantity": quantity,
-                "number_persons": number_persons,
-                "payment_method": pricing["payment_route"],
-                "status": "pending",
-                "total_price": pricing["total"] - pricing.get("partiel_price", 0),
-                "partiel_price": pricing.get("partiel_price", 0),
-                "comments": comments,
             }
         elif blane_type == "order":
             if not delivery_address or delivery_address == "N/A":
                 return "📦 Please provide a valid delivery address."
-            payload = {
-                "blane_id": blane_id,
-                "name": name,
-                "email": current_email,
-                "phone": phone,
-                "city": city,
-                "delivery_address": delivery_address,
-                "quantity": quantity,
-                "payment_method": pricing["payment_route"],
-                "status": "pending",
-                "total_price": pricing["total"] - pricing.get("partiel_price", 0),
-                "partiel_price": pricing.get("partiel_price", 0),
-                "comments": comments,
-            }
+            payload = (
+                {
+                    **base_payload,
+                    "delivery_address": delivery_address,
+                }
+                if not is_digital
+                else base_payload
+            )
         else:
             return "❌ Unknown blane type. Only 'reservation' or 'order' supported."
 
@@ -530,7 +540,7 @@ def create_reservation(
             res.raise_for_status()
             data = safe_json_get(res)
 
-            if pricing["payment_route"] in ("online", "partiel"):
+            if payment_method in ("online", "partiel"):
                 reference = None
                 nested = data.get("data") if isinstance(data, dict) else None
                 if isinstance(nested, dict):
@@ -540,7 +550,9 @@ def create_reservation(
                     try:
                         pay_url = f"{BASEURLFRONT}/payment/cmi/initiate"
                         pay_res = httpx.post(
-                            pay_url, headers=headers, json={"number": reference}
+                            pay_url,
+                            headers=headers,
+                            json={"number": reference},
                         )
                         pay_res.raise_for_status()
                         pay_data = pay_res.json()
@@ -573,8 +585,9 @@ def preview_reservation(
     end_date: str = "N/A",
     time: str = "N/A",
     quantity: int = 1,
-    number_persons: int = 1,
-    delivery_address: str = "N/A",
+    comments: str = "N/A",
+    delivery_address: str = "N/A",  # Only needed if not digital
+    payment_method: str = "cash",  # Must be one of: "cash", "partiel", "online"
 ) -> str:
     """
     Preview the reservation or order details before confirming,
@@ -587,8 +600,9 @@ def preview_reservation(
         end_date (str): End date for multi-day reservations. Default: "N/A".
         time (str): Reservation time (HH:MM). Default: "N/A".
         quantity (int): Number of units reserved or ordered. Default: 1.
-        number_persons (int): Number of persons for the reservation. Default: 1.
-        delivery_address (str): Address for delivery (orders only). Default: "N/A".
+        comments (str): Optional notes for the booking. Default: "N/A".
+        delivery_address (str): Address for delivery (non-digital orders only). Default: "N/A".
+        payment_method (str): Payment method - must be "cash", "partiel", or "online". Default: "cash".
 
     Returns:
         str: A formatted preview of the booking details,
@@ -604,9 +618,9 @@ def preview_reservation(
 
     pricing = calculate_pricing(blane, city, quantity)
     total_price = int(pricing.get("total", 0))
+    partiel_price = pricing.get("partiel_price")
+    payment_routes = pricing.get("payment_routes")
     delivery_cost = int(pricing.get("delivery_cost", 0))
-    payment_route = pricing.get("payment_route")
-    partiel_price = pricing.get("partiel_price", 0)
 
     try:
         if blane_type == "reservation":
@@ -638,7 +652,7 @@ def preview_reservation(
             lines += [f"- Date: {date}", f"- Time: {time}"]
         else:
             lines += [f"- Start Date: {date}", f"- End Date: {end_date}"]
-        lines += [f"- Quantity: {quantity}", f"- Persons: {number_persons}"]
+        lines += [f"- Quantity: {quantity} (ou personnes)"]
     else:
         lines += [f"- Quantity: {quantity}"]
         if delivery_address and delivery_address != "N/A":
@@ -646,19 +660,21 @@ def preview_reservation(
 
     lines += [
         f"- City: {city}",
-        f"- Payment: {'Partial' if payment_route=='partiel' else ('Online' if payment_route=='online' else 'Cash')}",
+        f"- Comments: {comments}",
+        f"- Selected Payment: {payment_method}",
+        f"- Payment Options: {', '.join(payment_routes)}",
     ]
 
     if blane_type == "order" and not blane.get("is_digital"):
         lines.append(f"- Delivery Cost: {delivery_cost} MAD")
 
     lines.append(f"- Total: {total_price} MAD")
-    if payment_route == "partiel" and partiel_price:
+    if payment_method == "partiel" and partiel_price:
         lines.append(f"- Due now (partial): {int(partiel_price)} MAD")
-    elif payment_route == "online":
+    elif payment_method == "online":
         lines.append(f"- Due now: {int(total_price)} MAD")
 
-    lines += ["", "Confirm booking?", "Buttons: [Confirm] [Edit] [Cancel]"]
+    lines += ["", "Confirm booking?", "[Confirm] [Edit] [Cancel]"]
     return "\n".join(lines)
 
 

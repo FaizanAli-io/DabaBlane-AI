@@ -149,11 +149,6 @@
           }
         } catch (error) {
           console.error("Error loading sessions:", error);
-          // Add a default session if loading fails
-          const option = document.createElement("option");
-          option.value = "f2962aa0-e873-47d6-8f80-28e6b2c82692";
-          option.textContent = "f2962aa0-e873-47d6-8f80-28e6b2c82692 (default)";
-          sessionIdSelect.appendChild(option);
         }
       }
 
@@ -189,12 +184,17 @@
       // Load sessions and chat history on page load and when env changes
       window.addEventListener("DOMContentLoaded", async function () {
         await loadSessions();
-        loadChatHistory();
+        // Give a small delay to ensure dropdown value is set before loading chat history
+        setTimeout(() => {
+          loadChatHistory();
+        }, 100);
       });
       sessionIdSelect.addEventListener("change", loadChatHistory);
       envSelect.addEventListener("change", async function () {
         await loadSessions();
-        loadChatHistory();
+        setTimeout(() => {
+          loadChatHistory();
+        }, 100);
       });
 
       // Clear chat history button
