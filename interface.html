@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>DabaBlane Agent Chat</title>
+    <link
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+      rel="stylesheet"
+    />
+    <style>
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        padding: 0;
+        background: #f8fafc;
+      }
+      body {
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .chat-container {
+        width: 100vw;
+        max-width: 100vw;
+        height: 100vh;
+        max-height: 100vh;
+        background: #fff;
+        border-radius: 0;
+        box-shadow: 0 2px 12px #0001;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+      }
+      .chat-header {
+        padding: 24px 24px 0 24px;
+      }
+      .chat-controls {
+        padding: 0 24px 12px 24px;
+      }
+      .chat-history {
+        flex: 1 1 auto;
+        overflow-y: auto;
+        margin-bottom: 0;
+        background: #f1f5f9;
+        border-radius: 8px;
+        padding: 24px;
+        margin: 0 24px;
+      }
+      .msg-user {
+        text-align: right;
+      }
+      .msg-bot {
+        text-align: left;
+      }
+      .msg {
+        margin: 6px 0;
+        padding: 10px 16px;
+        border-radius: 16px;
+        display: inline-block;
+        max-width: 70vw;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-size: 1.1em;
+      }
+      .msg-user .msg {
+        background: #d1e7dd;
+      }
+      .msg-bot .msg {
+        background: #e2e3e5;
+      }
+      .chat-input-row {
+        padding: 18px 24px;
+        background: #fff;
+        border-top: 1px solid #eee;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="chat-container">
+      <div class="chat-header">
+        <h3 class="mb-3 text-center">Chat with DabaBlane Agent</h3>
+      </div>
+      <div class="chat-controls row mb-2">
+        <div class="col-md-4 mb-2">
+          <label for="envSelect" class="form-label">Environment</label>
+          <select id="envSelect" class="form-select">
+            <option value="http://localhost:8000">Development</option>
+            <option value="https://agent.dabablane.com">Production</option>
+          </select>
+        </div>
+        <div class="col-md-8 mb-2">
+          <label for="sessionId" class="form-label">Session ID</label>
+          <div class="d-flex">
+            <input
+              type="text"
+              id="sessionId"
+              class="form-control"
+              value="f2962aa0-e873-47d6-8f80-28e6b2c82692"
+            />
+            <button
+              id="clearHistoryBtn"
+              class="btn btn-outline-danger ms-2"
+              style="white-space: nowrap"
+              type="button"
+            >
+              Clear Chat
+            </button>
+          </div>
+        </div>
+      </div>
+      <div id="chatHistory" class="chat-history"></div>
+      <form id="chatForm" class="input-group chat-input-row">
+        <textarea
+          id="messageInput"
+          class="form-control"
+          placeholder="Type your message..."
+          required
+          rows="1"
+          style="resize: none"
+        ></textarea>
+        <button class="btn btn-primary" type="submit">Send</button>
+      </form>
+    </div>
+    <script>
+      const chatHistory = document.getElementById("chatHistory");
+      const chatForm = document.getElementById("chatForm");
+      const messageInput = document.getElementById("messageInput");
+      const envSelect = document.getElementById("envSelect");
+      const sessionIdInput = document.getElementById("sessionId");
+
+      function appendMessage(sender, text) {
+        const div = document.createElement("div");
+        div.className = sender === "user" ? "msg-user" : "msg-bot";
+        const msgSpan = document.createElement("span");
+        msgSpan.className = "msg";
+        msgSpan.textContent = text;
+        div.appendChild(msgSpan);
+        chatHistory.appendChild(div);
+        chatHistory.scrollTop = chatHistory.scrollHeight;
+      }
+
+      function loadChatHistory() {
+        chatHistory.innerHTML = "";
+        const session_id = sessionIdInput.value.trim();
+        const baseUrl = envSelect.value;
+        fetch(`${baseUrl}/chat/history/${session_id}`)
+          .then((res) => res.json())
+          .then((data) => {
+            if (Array.isArray(data)) {
+              data.forEach((msg) => appendMessage(msg.sender, msg.message));
+            }
+          })
+          .catch(() => {
+            appendMessage("bot", "[Error loading chat history]");
+          });
+      }
+
+      // Load chat history on page load and when session/env changes
+      window.addEventListener("DOMContentLoaded", loadChatHistory);
+      sessionIdInput.addEventListener("change", loadChatHistory);
+      envSelect.addEventListener("change", loadChatHistory);
+
+      // Clear chat history button
+      const clearHistoryBtn = document.getElementById("clearHistoryBtn");
+      clearHistoryBtn.addEventListener("click", async function () {
+        const session_id = sessionIdInput.value.trim();
+        const baseUrl = envSelect.value;
+        try {
+          const res = await fetch(`${baseUrl}/chat/history/${session_id}`, {
+            method: "DELETE"
+          });
+          const data = await res.json();
+          chatHistory.innerHTML = "";
+          appendMessage("bot", data.detail || "[History cleared]");
+        } catch {
+          appendMessage("bot", "[Error clearing chat history]");
+        }
+      });
+
+      // Allow Shift+Enter for new line, Enter to send
+      messageInput.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          chatForm.requestSubmit();
+        }
+      });
+
+      chatForm.addEventListener("submit", async function (e) {
+        e.preventDefault();
+        const message = messageInput.value.trim();
+        if (!message) return;
+        appendMessage("user", message);
+        messageInput.value = "";
+        const session_id = sessionIdInput.value.trim();
+        const baseUrl = envSelect.value;
+        try {
+          const res = await fetch(`${baseUrl}/chat`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ session_id, message })
+          });
+          const data = await res.json();
+          appendMessage("bot", data.response || "[No response]");
+        } catch (err) {
+          appendMessage("bot", "[Error connecting to agent]");
+        }
+      });
+    </script>
+  </body>
+</html>

@@ -99,3 +99,15 @@ def get_chat_history(session_id: str):
         {"sender": msg.sender, "message": msg.content, "timestamp": msg.timestamp}
         for msg in history
     ]
+
+
+@router.delete("/chat/history/{session_id}")
+def clear_chat_history(session_id: str):
+    db = SessionLocal()
+    deleted = db.query(Message).filter(Message.session_id == session_id).delete()
+    db.commit()
+    db.close()
+    if deleted:
+        return {"detail": "Chat history cleared"}
+    else:
+        return {"detail": "No chat history found for this session"}
