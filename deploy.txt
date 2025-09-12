@@ -1,6 +1,8 @@
 ssh root@167.71.72.238
 password: iP7vGN33A
 
-cd DabaBlane-AI && git pull && sudo systemctl restart dabablane.service
+cd DabaBlane-AI
+git pull
+sudo systemctl restart dabablane.service
 
 journalctl -u dabablane.service -f (logs)

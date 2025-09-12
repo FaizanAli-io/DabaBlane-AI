@@ -18,36 +18,13 @@ from .utils import (
     format_date,
     format_time,
     normalize_text,
+    _list_categories,
 )
 
 
 class PaginationSentiment(Enum):
     POSITIVE = "positive"
     NEGATIVE = "negative"
-
-
-def _list_categories():
-    token = get_token()
-    if not token:
-        return "❌ Failed to retrieve token. Please try again later."
-    url = f"{BASEURLBACK}/categories"
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    try:
-        response = httpx.get(url, headers=headers)
-        response.raise_for_status()
-        data = response.json()
-
-        categories = data.get("data", [])
-        result = {cat["id"]: cat["name"] for cat in categories}
-
-        return result
-
-    except httpx.HTTPStatusError as e:
-        print(f"❌ HTTP Error {e.response.status_code}: {e.response.text}")
-        return {}
-    except Exception as e:
-        print(f"❌ Error: {str(e)}")
-        return {}
 
 
 def get_all_blanes_simple():
@@ -127,8 +104,7 @@ def introduction_message() -> str:
 
     categories = ", ".join(_list_categories().values())
 
-    return f"""
-    Bonjour! Je suis *DabaGPT*, votre assistant de réservation intelligent. 🤖✨
+    return f"""Bonjour! Je suis *DabaGPT*, votre assistant de réservation intelligent. 🤖✨
 
     Je peux vous aider à :
     ‣   🔍 Trouver des *blanes* (par catégorie ou localisation)
@@ -141,8 +117,7 @@ def introduction_message() -> str:
        ‣ *Quartier* (Si tu veux)
        ‣ *Ville*
 
-    Donnez-moi ces informations et je m'occupe du reste. 🚀
-    """
+    Donnez-moi ces informations et je m'occupe du reste. 🚀"""
 
 
 @tool("list_blanes")
@@ -850,6 +825,7 @@ def find_blanes_by_name_or_link(
     return "\n".join(lines)
 
 
+# Not in use
 @tool("search_blanes_advanced")
 def search_blanes_advanced(
     session_id: str, keywords: str, min_relevance: float = 0.9
