@@ -109,6 +109,7 @@ irrelevant_keywords = [
 
 district_map = {
     "anfa": [
+        "anfa",
         "bourgogne",
         "sidi belyout",
         "centre ville",
@@ -123,16 +124,35 @@ district_map = {
         "oasis",
         "cil",
     ],
-    "hay hassani": ["hay hassani", "oulfa", "errahma", "lissasfa"],
-    "aïn chock": ["aïn chock", "sidi maârouf", "californie", "polo"],
+    "hay hassani": [
+        "hay hassani",
+        "oulfa",
+        "errahma",
+        "lissasfa",
+    ],
+    "aïn chock": [
+        "aïn chock",
+        "sidi maârouf",
+        "californie",
+        "polo",
+    ],
     "aïn sebaâ - hay mohammadi": [
         "aïn sebaâ",
         "hay mohammadi",
         "roches noires",
         "belvédère",
     ],
-    "al fida - mers sultan": ["al fida", "mers sultan", "derb sultan", "habous"],
-    "sidi bernoussi - sidi moumen": ["sidi bernoussi", "sidi moumen", "zenata"],
+    "al fida - mers sultan": [
+        "al fida",
+        "mers sultan",
+        "derb sultan",
+        "habous",
+    ],
+    "sidi bernoussi - sidi moumen": [
+        "sidi bernoussi",
+        "sidi moumen",
+        "zenata",
+    ],
     "moulay rachid - ben m'sick": [
         "moulay rachid",
         "sidi othmane",
@@ -140,6 +160,7 @@ district_map = {
         "sbata",
     ],
     "surroundings": [
+        "surroundings",
         "bouskoura",
         "la ville verte",
         "dar bouazza",

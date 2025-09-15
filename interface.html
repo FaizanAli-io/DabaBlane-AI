@@ -104,6 +104,15 @@
             >
               Clear Chat
             </button>
+            <button
+              id="clearAllHistoryBtn"
+              class="btn btn-danger ms-2"
+              style="white-space: nowrap"
+              type="button"
+              title="Clear chats for all sessions"
+            >
+              Clear All Chats
+            </button>
           </div>
         </div>
       </div>
@@ -199,6 +208,7 @@
 
       // Clear chat history button
       const clearHistoryBtn = document.getElementById("clearHistoryBtn");
+      const clearAllHistoryBtn = document.getElementById("clearAllHistoryBtn");
       clearHistoryBtn.addEventListener("click", async function () {
         const session_id = sessionIdSelect.value.trim();
         if (!session_id) {
@@ -214,6 +224,26 @@
           chatHistory.innerHTML = "";
         } catch {
           console.error("Error clearing chat history");
+        }
+      });
+
+      // Clear all chat histories across all sessions
+      clearAllHistoryBtn.addEventListener("click", async function () {
+        if (!confirm("This will clear chat history for ALL sessions. Continue?")) {
+          return;
+        }
+        const baseUrl = envSelect.value;
+        try {
+          const res = await fetch(`${baseUrl}/chat/history`, { method: "DELETE" });
+          const data = await res.json();
+          // Clear current view and reload sessions
+          chatHistory.innerHTML = "";
+          await loadSessions();
+          setTimeout(() => {
+            loadChatHistory();
+          }, 100);
+        } catch (e) {
+          console.error("Error clearing all chat histories", e);
         }
       });
 

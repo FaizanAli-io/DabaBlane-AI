@@ -111,3 +111,13 @@ def clear_chat_history(session_id: str):
         return {"detail": "Chat history cleared"}
     else:
         return {"detail": "No chat history found for this session"}
+
+
+@router.delete("/chat/history")
+def clear_all_chat_history():
+    """Delete chat messages for all sessions (does not delete sessions)."""
+    db = SessionLocal()
+    deleted = db.query(Message).delete()
+    db.commit()
+    db.close()
+    return {"detail": f"Cleared {deleted} messages across all sessions"}

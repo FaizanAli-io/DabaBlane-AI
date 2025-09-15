@@ -1,5 +1,7 @@
+import re
 import httpx
 import requests
+import unicodedata
 from datetime import datetime
 
 from .config import BASEURL, BASEURLBACK
@@ -60,10 +62,18 @@ def parse_time_only(time_str):
 
 
 def normalize_text(text: str) -> str:
-    return text.lower().strip()
+    if text is None:
+        return ""
+    # Normalize unicode and strip diacritics
+    nfkd = unicodedata.normalize("NFKD", str(text))
+    without_diacritics = "".join(ch for ch in nfkd if not unicodedata.combining(ch))
+    lowered = without_diacritics.lower().strip()
+    # Collapse multiple whitespace
+    lowered = re.sub(r"\s+", " ", lowered)
+    return lowered
 
 
-def _list_categories():
+def list_categories():
     token = get_token()
     if not token:
         return "❌ Failed to retrieve token. Please try again later."

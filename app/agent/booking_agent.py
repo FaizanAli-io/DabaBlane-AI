@@ -8,16 +8,16 @@ from langchain.agents import AgentExecutor, create_tool_calling_agent
 from app.database import SessionLocal
 from app.chatbot.models import Session, Message
 
+from tools.utils import list_categories
+
 from tools.auth import authenticate_email
 
 from tools.blanes import (
     get_blane_info,
-    list_categories,
     introduction_message,
     find_blanes_by_name_or_link,
-    list_districts_and_subdistricts,
-    list_blanes_by_location_and_category,
     handle_user_pagination_response,
+    list_blanes_by_district_and_category,
 )
 
 from tools.booking import (
@@ -83,9 +83,9 @@ I live and breathe **DabaBlane** — never suggest other websites or services.
 
 ---
 
-### 📍 Location Reference
-- Always use the official Casablanca & surroundings district map ({district_map}) to normalize and validate user-provided district names when calling list_blanes_by_location_and_category.
-- Only district-level matching is supported — sub-districts should not be used for filtering.
+### 📍 Reference Data
+- Always use the official Casablanca & surroundings district map ({district_map}) to normalize and validate user-provided district names when calling list_blanes_by_district_and_category.
+- Use ({categories_list}) to get valid categories.
 
 ---
 
@@ -94,7 +94,7 @@ I live and breathe **DabaBlane** — never suggest other websites or services.
 **Start every session with:**  
 > “Hey! Do you already have a blane to book, or should I suggest some?”
 - If **“I have one”** → ask for name or link → `find_blanes_by_name_or_link` → show details → go to Booking Flow.
-- If **“Suggest”** → ask for category (mandatory) and optional location → `list_blanes_by_location_and_category` → show results → then proceed as above.
+- If **“Suggest”** → ask for category (mandatory) and optional location → `list_blanes_by_district_and_category` → show results → then proceed as above.
 
 ---
 
@@ -133,10 +133,8 @@ class BookingToolAgent:
             authenticate_email,
             introduction_message,
             get_blane_info,
-            list_categories,
             find_blanes_by_name_or_link,
-            list_districts_and_subdistricts,
-            list_blanes_by_location_and_category,
+            list_blanes_by_district_and_category,
             list_reservations,
             create_reservation,
             preview_reservation,
@@ -182,6 +180,7 @@ class BookingToolAgent:
                 "chat_history": formatted_history,
                 "client_email": client_email,
                 "district_map": district_map,
+                "categories_list": list_categories(),
             }
         )
 

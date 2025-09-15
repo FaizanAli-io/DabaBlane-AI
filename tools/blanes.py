@@ -1,6 +1,7 @@
 import httpx
 from enum import Enum
 from fuzzywuzzy import fuzz
+from functools import lru_cache
 from langchain.tools import tool
 from urllib.parse import urlparse, unquote
 
@@ -18,13 +19,94 @@ from .utils import (
     format_date,
     format_time,
     normalize_text,
-    _list_categories,
+    list_categories,
 )
 
 
 class PaginationSentiment(Enum):
     POSITIVE = "positive"
     NEGATIVE = "negative"
+
+
+@lru_cache(maxsize=1)
+def _build_normalized_location_maps():
+    """
+    Prepare normalized lookup maps from the configured district_map.
+
+    Returns a dict with:
+    - districts_norm: { district_norm: { 'label': original, 'subs_norm': [..], 'subs_label': [..] } }
+    - sub_to_district_norm: { sub_norm: district_norm }
+    """
+    districts_norm = {}
+    sub_to_district_norm = {}
+
+    for d_label, subs in district_map.items():
+        d_norm = normalize_text(d_label)
+        subs_label = subs or []
+        subs_norm = [normalize_text(s) for s in subs_label]
+
+        districts_norm[d_norm] = {
+            "label": d_label,
+            "subs_label": subs_label,
+            "subs_norm": subs_norm,
+        }
+
+        # Map each sub-district back to parent district
+        for s_norm in subs_norm:
+            sub_to_district_norm[s_norm] = d_norm
+
+        # Some maps include the district name also in its sub list; ensure mapping too
+        sub_to_district_norm.setdefault(d_norm, d_norm)
+
+    return {
+        "districts_norm": districts_norm,
+        "sub_to_district_norm": sub_to_district_norm,
+    }
+
+
+def resolve_location(location: str | None):
+    """
+    Resolve a user-provided location string to a canonical district and its sub-districts.
+
+    Behavior:
+    - If input is a district: return that district and all its sub-districts.
+    - If input is a sub-district: find its parent district and return that district with all sub-districts.
+
+    Returns:
+    - dict with keys: { 'district', 'district_norm', 'sub_districts', 'sub_districts_norm' }
+    - None if cannot resolve
+    """
+    if not location:
+        return None
+
+    loc_norm = normalize_text(location)
+    maps = _build_normalized_location_maps()
+    districts_norm = maps["districts_norm"]
+    sub_to_district_norm = maps["sub_to_district_norm"]
+
+    # Case 1: It's a known district
+    if loc_norm in districts_norm:
+        entry = districts_norm[loc_norm]
+        return {
+            "district": entry["label"],
+            "district_norm": loc_norm,
+            "sub_districts": entry["subs_label"],
+            "sub_districts_norm": entry["subs_norm"],
+        }
+
+    # Case 2: It's a known sub-district → resolve to its parent
+    parent_norm = sub_to_district_norm.get(loc_norm)
+    if parent_norm and parent_norm in districts_norm:
+        entry = districts_norm[parent_norm]
+        return {
+            "district": entry["label"],
+            "district_norm": parent_norm,
+            "sub_districts": entry["subs_label"],
+            "sub_districts_norm": entry["subs_norm"],
+        }
+
+    # Not resolvable
+    return None
 
 
 def get_all_blanes_simple():
@@ -75,12 +157,6 @@ def get_all_blanes_simple():
     return all_blanes
 
 
-@tool("list_categories")
-def list_categories() -> str:
-    "List all categories from the API"
-    return _list_categories()
-
-
 @tool("introduction_message", return_direct=True)
 def introduction_message() -> str:
     """
@@ -102,7 +178,7 @@ def introduction_message() -> str:
     Also when user says "Salam" in any form - respond with "Walikum Assalam" instead of Hello.
     """
 
-    categories = ", ".join(_list_categories().values())
+    categories = ", ".join(list_categories().values())
 
     return f"""Bonjour! Je suis *DabaGPT*, votre assistant de réservation intelligent. 🤖✨
 
@@ -281,7 +357,7 @@ def handle_user_pagination_response(
 
         if next_start <= total_blanes:
             # Update session with new start position
-            return blanes_list(next_start, current_offset)
+            return list_blanes(next_start, current_offset)
         else:
             return "❌ Vous êtes déjà à la fin de la liste. (You're already at the end of the list.)"
 
@@ -455,10 +531,324 @@ def check_message_relevance(user_message: str) -> str:
     return "irrelevant: I'm DabaGPT, specialized in blane reservations and bookings. I can help you find restaurants, spas, activities, and more in Casablanca. What interests you?"
 
 
-@tool("list_districts_and_subdistricts")
-def list_districts_and_subdistricts() -> str:
-    """Lists all districts and sub districts."""
-    return district_map
+@tool("find_blanes_by_name_or_link")
+def find_blanes_by_name_or_link(
+    query: str, limit: int = 10, score_threshold: int = 60
+) -> str:
+    """
+    Find blanes when the user provides a blane name or a link.
+    - If a link is provided, extracts the last path segment as the blane name (decodes hyphens and %20).
+    - Uses fuzzy matching to search across all active blanes by name/slug.
+    - Returns matches formatted as: "{idx} - {name} — {price} Dhs (blane_id: {id})".
+
+    Args:
+        query: Blane name or link.
+        limit: Maximum number of results to return (default 10).
+        score_threshold: Minimum fuzzy match score to include (default 60).
+    """
+
+    # Normalize user query (handle link vs. plain name)
+    def _extract_name_from_query(q: str) -> str:
+        q = (q or "").strip()
+        try:
+            if (
+                q.startswith("http://")
+                or q.startswith("https://")
+                or q.startswith("www.")
+            ):
+                parsed = urlparse(q if q.startswith("http") else f"https://{q}")
+                last = [seg for seg in parsed.path.split("/") if seg][-1:] or [""]
+                candidate = unquote(last[0])
+                # Convert common slug separators to spaces
+                candidate = candidate.replace("-", " ").replace("_", " ").strip()
+                return candidate if candidate else q
+            return q
+        except Exception:
+            return q
+
+    user_text = _extract_name_from_query(query)
+    if not user_text:
+        return "❌ Please provide a valid blane name or link."
+
+    token = get_token()
+    if not token:
+        return "❌ Failed to retrieve token. Please try again later."
+
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+    # Fetch all active blanes with pagination
+    collected = []
+    page = 1
+    try:
+        while True:
+            params = {
+                "status": "active",
+                "sort_by": "created_at",
+                "sort_order": "desc",
+                "per_page": 100,
+                "page": page,
+            }
+            resp = httpx.get(
+                f"{BASEURLBACK}/getBlanesByCategory", headers=headers, params=params
+            )
+            resp.raise_for_status()
+            payload = resp.json()
+            data = payload.get("data", [])
+            meta = payload.get("meta", {})
+            if not data:
+                break
+            collected.extend(data)
+            total = meta.get("total")
+            last_page = meta.get("last_page")
+            if last_page and page >= last_page:
+                break
+            if total and len(collected) >= int(total):
+                break
+            page += 1
+    except httpx.HTTPStatusError as e:
+        return f"❌ HTTP Error {e.response.status_code}: {e.response.text}"
+    except Exception as e:
+        return f"❌ Error fetching blanes: {str(e)}"
+
+    if not collected:
+        return "❌ No blanes found."
+
+    # Fuzzy score per blane (compare against name and slug)
+    query_norm = user_text.lower()
+    scored = []
+    for blane in collected:
+        name = (blane.get("name") or "").lower()
+        slug = (blane.get("slug") or "").lower().replace("-", " ").replace("_", " ")
+        s1 = fuzz.WRatio(query_norm, name) if name else 0
+        s2 = fuzz.partial_ratio(query_norm, name) if name else 0
+        s3 = fuzz.WRatio(query_norm, slug) if slug else 0
+        s4 = fuzz.partial_ratio(query_norm, slug) if slug else 0
+        score = max(s1, s2, s3, s4)
+        if score >= score_threshold:
+            scored.append((score, blane))
+
+    if not scored:
+        return f"❌ No similar blanes found for '{user_text}'."
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    top = [b for _, b in scored[: max(1, int(limit))]]
+
+    lines = []
+    for idx, blane in enumerate(top, start=1):
+        name = blane.get("name", "Unknown")
+        price = blane.get("price_current")
+        blane_id = blane.get("id")
+        if price:
+            lines.append(f"{idx} - {name} — {price} Dhs (blane_id: {blane_id})")
+        else:
+            lines.append(f"{idx} - {name} (blane_id: {blane_id})")
+
+    return "\n".join(lines)
+
+
+@tool("list_blanes_by_district_and_category")
+def list_blanes_by_district_and_category(
+    district: str = "",
+    category: str = "",
+    city: str = "",
+    start: int = 1,
+    offset: int = 10,
+) -> str:
+    """
+    List blanes by district (or sub-district) and category with simple text-based filtering.
+
+    The "district" argument can be either a district or a sub-district. It is resolved
+    via the configured district_map to a canonical district; if a sub-district is
+    provided, its parent district is used and all of that district's sub-districts are
+    considered for matching. Blanes are first fetched by category and then filtered by:
+    - Optional city (substring match on the blane's city field)
+    - A text search over name + description for any of the resolved district/sub-district terms
+
+    Results are sorted with a light location score and paginated in a user-friendly format.
+
+    Args:
+        district: District or sub-district to search within. If empty, location filtering is skipped.
+        category: Category name to filter by (required). Exact or partial name is resolved to a category_id.
+        city: Optional city name to apply as a substring filter on blane.city.
+        start: 1-based index of the first item to show (minimum 1).
+        offset: Number of items to show (between 1 and 25).
+
+    Returns:
+        A formatted, paginated string of matching blanes (with name, price when available,
+        and blane_id), including a filter summary and navigation hint. Returns a readable
+        error message if token retrieval fails, the category cannot be resolved, HTTP
+        requests fail, or no blanes match the filters.
+    """
+    # Validate pagination
+    start = max(1, int(start))
+    offset = max(1, min(25, int(offset)))
+
+    token = get_token()
+    if not token:
+        return "❌ Failed to retrieve token. Please try again later."
+
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+    # Normalize filters
+    city_norm = normalize_text(city)
+    resolved = resolve_location(district) if district else None
+
+    # Category is required
+    if not category:
+        cats = list_categories()
+        available = ", ".join(cats.values()) if isinstance(cats, dict) else ""
+        return f"Please provide a category. Available categories: {available}"
+
+    category_norm = normalize_text(category)
+
+    # Resolve category_id
+    category_id = None
+    try:
+        cats = list_categories()
+        if isinstance(cats, dict):
+            # exact match
+            for cid, cname in cats.items():
+                if (cname or "").lower().strip() == category_norm:
+                    category_id = cid
+                    break
+            # partial match
+            if not category_id:
+                for cid, cname in cats.items():
+                    cname_l = (cname or "").lower()
+                    if category_norm in cname_l or cname_l in category_norm:
+                        category_id = cid
+                        break
+    except Exception as e:
+        return f"❌ Error fetching categories: {str(e)}"
+
+    if not category_id:
+        available = ", ".join(cats.values()) if isinstance(cats, dict) else ""
+        return f"❌ Category '{category}' not found. Available categories: {available}"
+
+    # Fetch blanes for this category (paginate until enough to cover range)
+    try:
+        api_page = ((start - 1) // 100) + 1
+        params = {
+            "page": api_page,
+            "sort_order": "asc",
+            "category_id": category_id,
+            "paginationSize": 100,
+        }
+        resp = httpx.get(
+            f"{BASEURLBACK}/getBlanesByCategory", headers=headers, params=params
+        )
+        resp.raise_for_status()
+        data = resp.json().get("data", [])
+
+        total_needed = start + offset - 1
+        current_page = api_page
+        while len(data) < total_needed:
+            current_page += 1
+            params["page"] = current_page
+            r2 = httpx.get(
+                f"{BASEURLBACK}/getBlanesByCategory", headers=headers, params=params
+            )
+            r2.raise_for_status()
+            batch = r2.json().get("data", [])
+            if not batch:
+                break
+            data.extend(batch)
+    except Exception as e:
+        return f"❌ Error fetching blanes: {str(e)}"
+
+    # Build matchers from resolved location
+    district_label = None
+    sub_norms = []
+    if resolved:
+        district_label = resolved["district"]
+        sub_norms = resolved["sub_districts_norm"] or []
+        district_norm = resolved["district_norm"]
+    else:
+        district_norm = ""
+
+    # Filter by city + location mentions
+    matched = []
+    for blane in data:
+        name = blane.get("name") or ""
+        description = blane.get("description") or ""
+        blane_city = normalize_text(blane.get("city") or "")
+
+        # City filter (substring match)
+        if city_norm and city_norm not in blane_city:
+            continue
+
+        # Location filter
+        passes_loc = True if not resolved else False
+        if resolved:
+            text = normalize_text(f"{name} {description}")
+            # With district included among sub_norms (by your data), we just check any term
+            terms = set(sub_norms)
+            if district_norm:
+                terms.add(district_norm)
+            if any(term and term in text for term in terms):
+                passes_loc = True
+                blane["_location_score"] = 1
+            else:
+                blane["_location_score"] = 0
+        else:
+            blane["_location_score"] = 0
+
+        if passes_loc:
+            matched.append(blane)
+
+    if not matched:
+        pieces = []
+        if city:
+            pieces.append(f"city: {city}")
+        if district:
+            pieces.append(f"district: {district}")
+        pieces.append(f"category: {category}")
+        return f"❌ No blanes found for {', '.join(pieces)}. Try different search criteria."
+
+    matched.sort(key=lambda x: x.get("_location_score", 0), reverse=True)
+
+    total_matches = len(matched)
+    if start > total_matches:
+        return f"❌ Start position {start} exceeds total results ({total_matches}). Try a lower start position."
+
+    end_pos = min(start + offset - 1, total_matches)
+    page_items = matched[start - 1 : end_pos]
+
+    # Build output
+    lines = ["Here are some options:"]
+    filters = []
+    if city:
+        filters.append(f"City: {city}")
+    if district_label or district:
+        filters.append(f"District: {district_label or district}")
+    if category:
+        filters.append(f"Category: {category}")
+    lines.append(f"📋 Filtered Results: {' | '.join(filters) if filters else 'All'}")
+    lines.append(f"📊 Showing items {start}-{end_pos} of {total_matches} matches")
+    lines.append("")
+
+    for idx, blane in enumerate(page_items, start=start):
+        name = blane.get("name", "Unknown")
+        price = blane.get("price_current")
+        bid = blane.get("id")
+        if price:
+            lines.append(f"{idx}. {name} — {price} Dhs (blane_id: {bid})")
+        else:
+            lines.append(f"{idx}. {name} (blane_id: {bid})")
+
+    lines.append("")
+    if end_pos < total_matches:
+        next_start = end_pos + 1
+        next_end = min(next_start + offset - 1, total_matches)
+        lines.append(f"💡 More results available (Items {next_start}-{next_end})")
+    else:
+        lines.append("That's all for these filters.")
+        lines.append("Want to try different search criteria or see details?")
+
+    return "\n".join(lines)
+
+
+# Not in use anymore, kept for reference
 
 
 @tool("list_blanes_by_location_and_category")
@@ -499,7 +889,7 @@ def list_blanes_by_location_and_category(
     if category:
         category_norm = normalize_text(category)
     else:
-        categories = _list_categories()
+        categories = list_categories()
         available_categories = list(categories.values())
         return f"Please provide a category. Available categories: {', '.join(available_categories)}"
 
@@ -507,7 +897,7 @@ def list_blanes_by_location_and_category(
     category_id = None
     if category_norm:
         try:
-            categories = _list_categories()
+            categories = list_categories()
             if isinstance(categories, dict):
                 # Find category ID by matching category name (case-insensitive)
                 for cat_id, cat_name in categories.items():
@@ -710,122 +1100,6 @@ def list_blanes_by_location_and_category(
     return "\n".join(output_lines)
 
 
-@tool("find_blanes_by_name_or_link")
-def find_blanes_by_name_or_link(
-    query: str, limit: int = 10, score_threshold: int = 60
-) -> str:
-    """
-    Find blanes when the user provides a blane name or a link.
-    - If a link is provided, extracts the last path segment as the blane name (decodes hyphens and %20).
-    - Uses fuzzy matching to search across all active blanes by name/slug.
-    - Returns matches formatted as: "{idx} - {name} — {price} Dhs (blane_id: {id})".
-
-    Args:
-        query: Blane name or link.
-        limit: Maximum number of results to return (default 10).
-        score_threshold: Minimum fuzzy match score to include (default 60).
-    """
-
-    # Normalize user query (handle link vs. plain name)
-    def _extract_name_from_query(q: str) -> str:
-        q = (q or "").strip()
-        try:
-            if (
-                q.startswith("http://")
-                or q.startswith("https://")
-                or q.startswith("www.")
-            ):
-                parsed = urlparse(q if q.startswith("http") else f"https://{q}")
-                last = [seg for seg in parsed.path.split("/") if seg][-1:] or [""]
-                candidate = unquote(last[0])
-                # Convert common slug separators to spaces
-                candidate = candidate.replace("-", " ").replace("_", " ").strip()
-                return candidate if candidate else q
-            return q
-        except Exception:
-            return q
-
-    user_text = _extract_name_from_query(query)
-    if not user_text:
-        return "❌ Please provide a valid blane name or link."
-
-    token = get_token()
-    if not token:
-        return "❌ Failed to retrieve token. Please try again later."
-
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-
-    # Fetch all active blanes with pagination
-    collected = []
-    page = 1
-    try:
-        while True:
-            params = {
-                "status": "active",
-                "sort_by": "created_at",
-                "sort_order": "desc",
-                "per_page": 100,
-                "page": page,
-            }
-            resp = httpx.get(
-                f"{BASEURLBACK}/getBlanesByCategory", headers=headers, params=params
-            )
-            resp.raise_for_status()
-            payload = resp.json()
-            data = payload.get("data", [])
-            meta = payload.get("meta", {})
-            if not data:
-                break
-            collected.extend(data)
-            total = meta.get("total")
-            last_page = meta.get("last_page")
-            if last_page and page >= last_page:
-                break
-            if total and len(collected) >= int(total):
-                break
-            page += 1
-    except httpx.HTTPStatusError as e:
-        return f"❌ HTTP Error {e.response.status_code}: {e.response.text}"
-    except Exception as e:
-        return f"❌ Error fetching blanes: {str(e)}"
-
-    if not collected:
-        return "❌ No blanes found."
-
-    # Fuzzy score per blane (compare against name and slug)
-    query_norm = user_text.lower()
-    scored = []
-    for blane in collected:
-        name = (blane.get("name") or "").lower()
-        slug = (blane.get("slug") or "").lower().replace("-", " ").replace("_", " ")
-        s1 = fuzz.WRatio(query_norm, name) if name else 0
-        s2 = fuzz.partial_ratio(query_norm, name) if name else 0
-        s3 = fuzz.WRatio(query_norm, slug) if slug else 0
-        s4 = fuzz.partial_ratio(query_norm, slug) if slug else 0
-        score = max(s1, s2, s3, s4)
-        if score >= score_threshold:
-            scored.append((score, blane))
-
-    if not scored:
-        return f"❌ No similar blanes found for '{user_text}'."
-
-    scored.sort(key=lambda x: x[0], reverse=True)
-    top = [b for _, b in scored[: max(1, int(limit))]]
-
-    lines = []
-    for idx, blane in enumerate(top, start=1):
-        name = blane.get("name", "Unknown")
-        price = blane.get("price_current")
-        blane_id = blane.get("id")
-        if price:
-            lines.append(f"{idx} - {name} — {price} Dhs (blane_id: {blane_id})")
-        else:
-            lines.append(f"{idx} - {name} (blane_id: {blane_id})")
-
-    return "\n".join(lines)
-
-
-# Not in use
 @tool("search_blanes_advanced")
 def search_blanes_advanced(
     session_id: str, keywords: str, min_relevance: float = 0.9

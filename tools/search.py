@@ -6,7 +6,7 @@ from typing import Optional, List, Tuple, Dict, Any
 
 from .config import BASEURLBACK, district_map
 
-from .utils import get_token, normalize_text, _list_categories
+from .utils import get_token, normalize_text, list_categories
 
 
 # -----------------------
@@ -100,7 +100,7 @@ def resolve_category_id(category_name: str) -> Tuple[Optional[str], Optional[str
     if not category_name:
         return None, None
     try:
-        categories = _list_categories()
+        categories = list_categories()
     except Exception as e:
         return None, f"❌ Error fetching categories: {str(e)}"
 
@@ -248,7 +248,7 @@ def list_blanes_by_location_and_category(
     # --- Ensure category is provided ---
     if not category_norm:
         try:
-            categories = _list_categories()
+            categories = list_categories()
             available_categories = (
                 list(categories.values())
                 if isinstance(categories, dict)

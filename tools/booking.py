@@ -365,7 +365,6 @@ def prepare_reservation_prompt(blane_id: int) -> str:
 
 @tool("create_reservation")
 def create_reservation(
-    session_id: str,
     blane_id: int,
     name: str = "N/A",
     email: str = "N/A",
@@ -384,7 +383,6 @@ def create_reservation(
     and reservation constraints (dates, times, delivery address, etc.).
 
     Parameters:
-        session_id (str): The ID of the client session to associate with the booking.
         blane_id (int): The ID of the blane to reserve or order.
         name (str): Client's name. Default: "N/A".
         email (str): Client's email. Default: "N/A".
@@ -503,16 +501,10 @@ def create_reservation(
             "end_date": end_date if type_time == "date" else None,
         }
     elif blane_type == "order":
-        if not delivery_address or delivery_address == "N/A":
-            return "📦 Please provide a valid delivery address."
-        payload = (
-            {
-                **base_payload,
-                "delivery_address": delivery_address,
-            }
-            if not is_digital
-            else base_payload
-        )
+        payload = {
+            **base_payload,
+            "delivery_address": "Online Service" if is_digital else delivery_address,
+        }
     else:
         return "❌ Unknown blane type. Only 'reservation' or 'order' supported."
 
@@ -600,7 +592,6 @@ def preview_reservation(
     pricing = calculate_pricing(blane, city, quantity)
     total_price = int(pricing.get("total", 0))
     partiel_price = pricing.get("partiel_price")
-    payment_routes = pricing.get("payment_routes")
     delivery_cost = int(pricing.get("delivery_cost", 0))
 
     try:
