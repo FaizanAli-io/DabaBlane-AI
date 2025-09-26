@@ -1,6 +1,13 @@
+import os
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
 BASEURL = "https://api.dabablane.com/api"
 BASEURLBACK = "https://api.dabablane.com/api/back/v1"
 BASEURLFRONT = "https://api.dabablane.com/api/front/v1"
+AGENT_URL = os.getenv("AGENT_URL", "http://localhost:8000/")
 
 
 blane_keywords = [

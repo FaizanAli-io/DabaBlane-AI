@@ -12,13 +12,20 @@ def get_token():
     headers = {"Content-Type": "application/json"}
     payload = {"email": "admin@dabablane.com", "password": "admin"}
     response = requests.post(url, headers=headers, json=payload)
-    print(response)
-    token = None
     if response.status_code == 200:
-        token = response.json()["data"]["user_token"]
-        return token
+        return response.json()["data"]["user_token"]
     else:
         return "Try again later."
+
+
+def get_auth_headers():
+    token = get_token()
+    if not token:
+        raise ValueError("Failed to retrieve token")
+    return {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
 
 
 def format_date(date_str):

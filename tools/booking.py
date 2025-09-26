@@ -1,32 +1,23 @@
 import httpx
 import requests
+from langchain.tools import tool
 from typing import Dict, Any, List
 from datetime import datetime, date, time, timedelta
 
-from langchain.tools import tool
-from app.database import SessionLocal
-from app.chatbot.models import Session
-
-from .config import BASEURLBACK, BASEURLFRONT
+from .config import BASEURLBACK, BASEURLFRONT, AGENT_URL
 
 from .utils import (
     get_token,
     format_date,
     parse_datetime,
     parse_time_only,
+    get_auth_headers,
 )
 
 
 # -----------------------------
 # Helpers
 # -----------------------------
-
-
-def get_auth_headers() -> Dict[str, str]:
-    token = get_token()
-    if not token:
-        raise ValueError("Failed to retrieve token")
-    return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
 
 def safe_json_get(resp: httpx.Response) -> Dict[str, Any]:
@@ -363,193 +354,6 @@ def prepare_reservation_prompt(blane_id: int) -> str:
     return build_reservation_prompt(blane)
 
 
-@tool("create_reservation")
-def create_reservation(
-    blane_id: int,
-    name: str = "N/A",
-    email: str = "N/A",
-    phone: str = "N/A",
-    city: str = "N/A",
-    date: str = "N/A",
-    end_date: str = "N/A",
-    time: str = "N/A",
-    quantity: int = 1,
-    comments: str = "N/A",
-    delivery_address: str = "N/A",  # Only needed if not digital
-    payment_method: str = "cash",  # Must be one of: "cash", "partiel", "online"
-) -> str:
-    """
-    Create a reservation or order for a specific blane, validating session, client info,
-    and reservation constraints (dates, times, delivery address, etc.).
-
-    Parameters:
-        blane_id (int): The ID of the blane to reserve or order.
-        name (str): Client's name. Default: "N/A".
-        email (str): Client's email. Default: "N/A".
-        phone (str): Client's phone number. Default: "N/A".
-        city (str): City where the reservation or order applies. Default: "N/A".
-        date (str): Reservation date (YYYY-MM-DD). Default: "N/A".
-        end_date (str): End date for multi-day reservations. Default: "N/A".
-        time (str): Reservation time (HH:MM). Default: "N/A".
-        quantity (int): Number of units reserved or ordered. Default: 1.
-        comments (str): Optional notes for the booking. Default: "N/A".
-        delivery_address (str): Address for delivery (non-digital orders only). Default: "N/A".
-        payment_method (str): Payment method - must be "cash", "partiel", or "online". Default: "cash".
-
-
-    Returns:
-        str: A success message with payment information if applicable,
-             or an error message if creation fails.
-    """
-    try:
-        blane = fetch_blane(blane_id)
-    except ValueError as e:
-        return f"❌ {str(e)}"
-    except httpx.HTTPStatusError as e:
-        return f"❌ HTTP Error {e.response.status_code}: {e.response.text}"
-    except Exception as e:
-        return f"❌ Error fetching blane: {e}"
-
-    if not email:
-        return "📧 Please provide your email address to create the reservation. I need this to send you the booking confirmation."
-
-    if "@" not in email or "." not in email.split("@")[-1]:
-        return (
-            "❌ Please provide a valid email address format (e.g., user@example.com)."
-        )
-
-    pricing = calculate_pricing(blane, city, quantity)
-
-    # Validate chosen payment method
-    payment_routes = pricing["payment_routes"]
-    if payment_method not in payment_routes:
-        return f"❌ Unsupported payment method '{payment_method}'. Available: {', '.join(payment_routes)}"
-
-    blane_type = blane.get("type")
-    type_time = blane.get("type_time")
-    is_digital = blane.get("is_digital", False)
-
-    today_date = datetime.today().date()
-    if date and date != "N/A":
-        try:
-            date_obj = parse_date(date)
-            if date_obj < today_date:
-                return f"❌ Reservation date {date} must not be in the past."
-        except Exception:
-            return "❌ Invalid date format. Use YYYY-MM-DD."
-
-    if blane_type == "reservation":
-        try:
-            user_date = parse_date(date)
-        except Exception:
-            return "❌ Invalid date format. Use YYYY-MM-DD."
-
-        if not is_day_open(blane, user_date):
-            return f"🚫 This blane is closed on {user_date.strftime('%A')}."
-
-        if type_time == "time":
-            try:
-                heure_debut = parse_time_only(blane.get("heure_debut"))
-                heure_fin = parse_time_only(blane.get("heure_fin"))
-                interval = int(blane.get("intervale_reservation", 0) or 0)
-                if interval <= 0:
-                    return "❌ Invalid interval configured for this blane."
-                valid_slots = generate_time_slots(heure_debut, heure_fin, interval)
-            except Exception:
-                return "❌ Error parsing blane time slots."
-
-            try:
-                _ = parse_time(time)
-            except Exception:
-                return "❌ Invalid time format. Use HH:MM."
-
-            if time not in valid_slots:
-                return f"🕓 Invalid time. Choose from: {', '.join(valid_slots)}"
-
-        elif type_time == "date":
-            try:
-                start_dt = parse_datetime(blane.get("start_date"))
-                end_dt = parse_datetime(blane.get("expiration_date"))
-                user_start = datetime.strptime(date, "%Y-%m-%d")
-                user_end = datetime.strptime(end_date, "%Y-%m-%d")
-                if not (start_dt.date() <= user_start.date() <= end_dt.date()):
-                    return f"❌ Start date must be within {start_dt.date()} to {end_dt.date()}"
-                if not (start_dt.date() <= user_end.date() <= end_dt.date()):
-                    return f"❌ End date must be within {start_dt.date()} to {end_dt.date()}"
-            except Exception:
-                return "❌ Invalid start or end date format."
-
-    base_payload = {
-        "blane_id": blane_id,
-        "name": name,
-        "email": email,
-        "phone": phone,
-        "city": city,
-        "quantity": quantity,
-        "payment_method": payment_method,
-        "status": "pending",
-        "total_price": pricing["total"] - pricing.get("partiel_price", 0),
-        "partiel_price": pricing.get("partiel_price", 0),
-        "comments": comments,
-    }
-
-    if blane_type == "reservation":
-        payload = {
-            **base_payload,
-            "date": date,
-            "time": time if type_time == "time" else None,
-            "end_date": end_date if type_time == "date" else None,
-        }
-    elif blane_type == "order":
-        payload = {
-            **base_payload,
-            "delivery_address": "Online Service" if is_digital else delivery_address,
-        }
-    else:
-        return "❌ Unknown blane type. Only 'reservation' or 'order' supported."
-
-    try:
-        headers = get_auth_headers()
-        api_endpoint = (
-            f"{BASEURLFRONT}/reservations"
-            if blane_type == "reservation"
-            else f"{BASEURLFRONT}/orders"
-        )
-        res = httpx.post(api_endpoint, headers=headers, json=payload)
-        res.raise_for_status()
-        data = safe_json_get(res)
-
-        if payment_method in ("online", "partiel"):
-            reference = None
-            nested = data.get("data") if isinstance(data, dict) else None
-            if isinstance(nested, dict):
-                reference = nested.get("NUM_RES") or nested.get("NUM_ORD")
-
-            if reference:
-                try:
-                    pay_url = f"{BASEURLFRONT}/payment/cmi/initiate"
-                    pay_res = httpx.post(
-                        pay_url,
-                        headers=headers,
-                        json={"number": reference},
-                    )
-                    pay_res.raise_for_status()
-                    pay_data = pay_res.json()
-                    if pay_data.get("status") and pay_data.get("payment_url"):
-                        return f"✅ Created. Ref: {reference}. 💳 Pay here: {pay_data.get('payment_url')}"
-                    else:
-                        return f"✅ Success! {data}. Payment initiation: {pay_data}"
-                except Exception as e:
-                    return f"✅ Success! {data}, but payment link failed: {str(e)}"
-
-        return f"✅ Success! {data}"
-
-    except httpx.HTTPStatusError as e:
-        return f"❌ HTTP Error {e.response.status_code}: {e.response.text}"
-    except Exception as e:
-        return f"❌ Error submitting reservation: {str(e)}"
-
-
 @tool("preview_reservation")
 def preview_reservation(
     blane_id: int,
@@ -559,23 +363,23 @@ def preview_reservation(
     time: str = "N/A",
     quantity: int = 1,
     comments: str = "N/A",
-    delivery_address: str = "N/A",  # Only needed if not digital
-    payment_method: str = "cash",  # Must be one of: "cash", "partiel", "online"
+    delivery_address: str = "N/A",
+    payment_method: str = "cash",
 ) -> str:
     """
     Preview the reservation or order details before confirming,
     including validation of dates, times, and pricing.
 
     Parameters:
-        blane_id (int): The ID of the blane to preview.
-        city (str): City where the reservation or order applies. Default: "N/A".
-        date (str): Reservation date (YYYY-MM-DD). Default: "N/A".
-        end_date (str): End date for multi-day reservations. Default: "N/A".
-        time (str): Reservation time (HH:MM). Default: "N/A".
-        quantity (int): Number of units reserved or ordered. Default: 1.
-        comments (str): Optional notes for the booking. Default: "N/A".
-        delivery_address (str): Address for delivery (non-digital orders only). Default: "N/A".
-        payment_method (str): Payment method - must be "cash", "partiel", or "online". Default: "cash".
+    - blane_id (int): The ID of the blane to preview.
+    - city (str): City where the reservation or order applies. Default: "N/A".
+    - date (str): Reservation date (YYYY-MM-DD). Default: "N/A".
+    - end_date (str): End date for multi-day reservations. Default: "N/A".
+    - time (str): Reservation time (HH:MM). Default: "N/A".
+    - quantity (int): Number of units reserved or ordered. Default: 1.
+    - comments (str): Optional notes for the booking. Default: "N/A".
+    - delivery_address (str): Address for delivery (non-digital orders only). Default: "N/A".
+    - payment_method (str): Payment method - must be "cash", "partiel", or "online". Default: "cash".
 
     Returns:
         str: A formatted preview of the booking details,
@@ -647,6 +451,159 @@ def preview_reservation(
 
     lines += ["", "Confirm booking?", "[Confirm] [Edit] [Cancel]"]
     return "\n".join(lines)
+
+
+@tool("create_reservation")
+def create_reservation(
+    blane_id: int,
+    name: str = "N/A",
+    email: str = "N/A",
+    phone: str = "N/A",
+    city: str = "N/A",
+    date: str = "N/A",
+    end_date: str = "N/A",
+    time: str = "N/A",
+    quantity: int = 1,
+    comments: str = "N/A",
+    delivery_address: str = "N/A",
+    payment_method: str = "cash",
+) -> str:
+    """
+    Create a reservation or order for a specific blane, validating session, client info, and reservation constraints (dates, times, delivery address, etc.).
+
+    Parameters:
+    - blane_id (int): The ID of the blane to reserve or order.
+    - name (str): Client's name. Default: "N/A".
+    - email (str): Client's email. Default: "N/A".
+    - phone (str): Client's phone number. Default: "N/A".
+    - city (str): City where the reservation or order applies. Default: "N/A".
+    - date (str): Reservation date (YYYY-MM-DD). Default: "N/A".
+    - end_date (str): End date for multi-day reservations. Default: "N/A".
+    - time (str): Reservation time (HH:MM). Default: "N/A".
+    - quantity (int): Number of units reserved or ordered. Default: 1.
+    - comments (str): Optional notes for the booking. Default: "N/A".
+    - delivery_address (str): Address for delivery (non-digital orders only). Default: "N/A".
+    - payment_method (str): Payment method - must be "cash", "partiel", or "online". Default: "cash".
+
+    Returns:
+        str: A success message with payment information if applicable,
+             or an error message if creation fails.
+    """
+    try:
+        blane = fetch_blane(blane_id)
+    except Exception as e:
+        return f"❌ Error fetching blane: {str(e)}"
+
+    if not email or "@" not in email or "." not in email.split("@")[-1]:
+        return "❌ Please provide a valid email address (e.g., user@example.com)."
+
+    pricing = calculate_pricing(blane, city, quantity)
+
+    if payment_method not in pricing["payment_routes"]:
+        return f"❌ Unsupported payment method '{payment_method}'. Available: {', '.join(pricing['payment_routes'])}"
+
+    blane_type = blane.get("type")
+    type_time = blane.get("type_time")
+    is_digital = blane.get("is_digital", False)
+
+    # --- Validation ---
+    if blane_type == "reservation":
+        if date == "N/A":
+            return "❌ Reservation requires a date."
+
+        try:
+            user_date = parse_date(date)
+            if user_date < datetime.today().date():
+                return f"❌ Reservation date {date} must not be in the past."
+        except Exception:
+            return "❌ Invalid date format. Use YYYY-MM-DD."
+
+        if not is_day_open(blane, user_date):
+            return f"🚫 This blane is closed on {user_date.strftime('%A')}."
+
+        if type_time == "time":
+            try:
+                heure_debut = parse_time_only(blane.get("heure_debut"))
+                heure_fin = parse_time_only(blane.get("heure_fin"))
+                interval = int(blane.get("intervale_reservation", 0) or 0)
+                valid_slots = generate_time_slots(heure_debut, heure_fin, interval)
+                if time not in valid_slots:
+                    return f"🕓 Invalid time. Choose from: {', '.join(valid_slots)}"
+            except Exception:
+                return "❌ Error parsing blane time slots."
+
+        if type_time == "date":
+            try:
+                start_dt = parse_datetime(blane.get("start_date"))
+                end_dt = parse_datetime(blane.get("expiration_date"))
+                user_start = datetime.strptime(date, "%Y-%m-%d")
+                user_end = datetime.strptime(end_date, "%Y-%m-%d")
+                if not (start_dt.date() <= user_start.date() <= end_dt.date()):
+                    return f"❌ Start date must be within {start_dt.date()} to {end_dt.date()}"
+                if not (start_dt.date() <= user_end.date() <= end_dt.date()):
+                    return f"❌ End date must be within {start_dt.date()} to {end_dt.date()}"
+            except Exception:
+                return "❌ Invalid start or end date format."
+
+    # --- Payload setup ---
+    base_payload = {
+        "blane_id": blane_id,
+        "name": name,
+        "email": email,
+        "phone": phone,
+        "city": city,
+        "quantity": quantity,
+        "payment_method": payment_method,
+        "status": "pending",
+        "total_price": pricing["total"] - pricing.get("partiel_price", 0),
+        "partiel_price": pricing.get("partiel_price", 0),
+        "comments": comments,
+    }
+
+    payload = {
+        **base_payload,
+        "date": date if blane_type == "reservation" else None,
+        "time": time if type_time == "time" else None,
+        "end_date": end_date if type_time == "date" else None,
+        "delivery_address": (
+            "Online Service"
+            if (blane_type == "order" and is_digital)
+            else delivery_address
+        ),
+    }
+
+    # --- Submit reservation/order ---
+    try:
+        headers = get_auth_headers()
+        api_endpoint = (
+            f"{BASEURLFRONT}/reservations"
+            if blane_type == "reservation"
+            else f"{BASEURLFRONT}/orders"
+        )
+        res = httpx.post(api_endpoint, headers=headers, json=payload)
+        res.raise_for_status()
+        data = safe_json_get(res)
+    except httpx.HTTPStatusError as e:
+        return f"❌ HTTP Error {e.response.status_code}: {e.response.text}"
+    except Exception as e:
+        return f"❌ Error submitting reservation: {str(e)}"
+
+    # --- Handle online/partiel payment ---
+    if payment_method in ("online", "partiel"):
+        nested = data.get("data") if isinstance(data, dict) else None
+        reference = (
+            nested.get("NUM_RES") or nested.get("NUM_ORD")
+            if isinstance(nested, dict)
+            else None
+        )
+
+        if reference:
+            pay_link = f"{AGENT_URL}/payment-page/{reference}"
+            return f"✅ Created. Ref: {reference}. 💳 Pay here: {pay_link}"
+        else:
+            return f"✅ Success! {data}, but payment reference missing."
+
+    return f"✅ Success! {data}"
 
 
 @tool("list_reservations")

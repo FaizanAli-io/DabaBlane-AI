@@ -1,10 +1,9 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import agent
 from app.chatbot import models
 from app.database import engine
-from app.routers import wati_webhook
+from app.routers import agent, payment, wati_webhook
 
 models.Base.metadata.create_all(bind=engine)
 
@@ -19,4 +18,5 @@ app.add_middleware(
 )
 
 app.include_router(agent.router)
+app.include_router(payment.router)
 app.include_router(wati_webhook.router)
