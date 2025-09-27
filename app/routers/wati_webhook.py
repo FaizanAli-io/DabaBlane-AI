@@ -4,11 +4,11 @@ import time
 import httpx
 import logging
 import traceback
-from datetime import datetime
 from dotenv import load_dotenv
 from fastapi import APIRouter, Request
-from fastapi.responses import PlainTextResponse
+from datetime import datetime, timezone
 from sqlalchemy.exc import OperationalError
+from fastapi.responses import PlainTextResponse
 
 from app.database import SessionLocal
 from app.agent.booking_agent import BookingToolAgent
@@ -17,17 +17,15 @@ from app.chatbot.models import Session as SessionModel, Message
 # Load environment variables
 load_dotenv()
 
-# Set up logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# Config
-VERIFY_TOKEN = "my_custom_secret_token"
-WHATSAPP_TOKEN = os.getenv("META_ACCESS_TOKEN")
-PHONE_NUMBER_ID = os.getenv("META_PHONE_NUMBER_ID")
-
 router = APIRouter()
 agent = BookingToolAgent()
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
+
+VERIFY_TOKEN = os.getenv("META_VERIFY_TOKEN")
+WHATSAPP_TOKEN = os.getenv("META_ACCESS_TOKEN")
+PHONE_NUMBER_ID = os.getenv("META_PHONE_NUMBER_ID")
 
 
 def formatting(text):
@@ -125,7 +123,7 @@ async def receive_message(request: Request):
                 session_id=session_id,
                 sender="user",
                 content=text,
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(timezone.utc),
             )
             db.add(user_message)
             db.commit()
@@ -143,7 +141,7 @@ async def receive_message(request: Request):
                 session_id=session_id,
                 sender="bot",
                 content=formatted_response,
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(timezone.utc),
             )
             db.add(bot_message)
             db.commit()

@@ -546,18 +546,21 @@ def create_reservation(
                 return "❌ Invalid start or end date format."
 
     # --- Payload setup ---
+    partial_price = pricing.get("partiel_price", 0)
+
     base_payload = {
-        "blane_id": blane_id,
         "name": name,
+        "city": city,
         "email": email,
         "phone": phone,
-        "city": city,
-        "quantity": quantity,
-        "payment_method": payment_method,
         "status": "pending",
-        "total_price": pricing["total"] - pricing.get("partiel_price", 0),
-        "partiel_price": pricing.get("partiel_price", 0),
+        "blane_id": blane_id,
         "comments": comments,
+        "quantity": quantity,
+        "number_persons": quantity,
+        "partiel_price": partial_price,
+        "payment_method": payment_method,
+        "total_price": pricing["total"] - partial_price,
     }
 
     payload = {

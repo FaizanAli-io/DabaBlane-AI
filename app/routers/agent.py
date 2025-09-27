@@ -1,8 +1,8 @@
 import uuid
-from datetime import datetime
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from fastapi import APIRouter, Depends
+from datetime import datetime, timezone
 
 from app.database import get_db
 from app.database import SessionLocal
@@ -26,25 +26,24 @@ def chat_with_agent(request: ChatInput, db: Session = Depends(get_db)):
 
     # Log user message
     user_msg = Message(
-        session_id=session_id,
         sender="user",
         content=user_message,
-        timestamp=datetime.utcnow(),
+        session_id=session_id,
+        timestamp=datetime.now(timezone.utc),
     )
     db.add(user_msg)
     db.commit()
 
     # Get agent response
     response_text = agent.get_response(user_message, session_id)
-
     response_text = response_text.replace("**", "*")
 
     # Log bot response
     bot_msg = Message(
-        session_id=session_id,
         sender="bot",
         content=response_text,
-        timestamp=datetime.utcnow(),
+        session_id=session_id,
+        timestamp=datetime.now(timezone.utc),
     )
     db.add(bot_msg)
     db.commit()

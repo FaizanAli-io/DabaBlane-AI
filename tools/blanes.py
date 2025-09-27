@@ -368,7 +368,7 @@ def handle_user_pagination_response(
         return "❓ Je n'ai pas compris votre réponse. Dites 'oui' pour voir plus ou 'non' pour arrêter. (I didn't understand your response. Say 'yes' to see more or 'no' to stop.)"
 
 
-@tool("blanes_info")
+@tool("get_blane_info")
 def get_blane_info(blane_id: int):
     """
     Gives details of any blane using its ID.
@@ -385,9 +385,9 @@ def get_blane_info(blane_id: int):
         response = httpx.get(url, headers=headers)
         response.raise_for_status()
         blane = response.json().get("data", [])
-        print(blane)
 
         msg = f"📋 *Blane Details*\n\n"
+        msg += f"🏷 *ID:* {blane.get('id')}\n"
         msg += f"🏷 *Name:* {blane.get('name')}\n"
         msg += f"🏙 *City:* {blane.get('city')}\n"
         msg += f"🏪 *Vendor:* {blane.get('commerce_name', 'N/A')}\n"
@@ -1224,10 +1224,7 @@ def search_blanes_advanced(
                 raise ValueError("AI response is not a list")
 
         except (json.JSONDecodeError, ValueError) as e:
-            # Fallback to rule-based matching
             print(f"AI parsing failed: {e}, using fallback")
-            # relevant_blanes = analyze_blanes_with_ai("", keywords, blanes_info)
-            # relevant_blanes = [b for b in relevant_blanes if b.get('relevance_score', 0) >= min_relevance]
 
         if not relevant_blanes:
             return f"❌ No blanes found with relevance >= {min_relevance} for keywords: '{keywords}'"

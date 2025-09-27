@@ -1,10 +1,15 @@
 import re
+import json
 import httpx
 import requests
 import unicodedata
 from datetime import datetime
 
 from .config import BASEURL, BASEURLBACK
+
+
+def pprint(data):
+    print(json.dumps(data, indent=2, ensure_ascii=False))
 
 
 def get_token():

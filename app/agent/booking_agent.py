@@ -8,9 +8,8 @@ from langchain.agents import AgentExecutor, create_tool_calling_agent
 from app.database import SessionLocal
 from app.chatbot.models import Session, Message
 
-from tools.utils import list_categories
-
 from tools.auth import authenticate_email
+from tools.utils import list_categories, pprint
 
 from tools.blanes import (
     get_blane_info,
@@ -168,18 +167,22 @@ class BookingToolAgent:
 
         db = SessionLocal()
         session = db.query(Session).filter_by(id=session_id).first()
-        client_email = session.client_email if session else "unauthenticated"
-        print(f"client email : {client_email}")
         db.close()
-        print(incoming_text)
+
+        client_email = session.client_email if session else None
+        base_payload = {
+            "input": incoming_text,
+            "session_id": session_id,
+            "client_email": client_email,
+        }
+
+        pprint(base_payload)
         response = self.executor.invoke(
             {
-                "input": incoming_text,
-                "date": date.today().isoformat(),
-                "session_id": session_id,
-                "chat_history": formatted_history,
-                "client_email": client_email,
+                **base_payload,
                 "district_map": district_map,
+                "date": date.today().isoformat(),
+                "chat_history": formatted_history,
                 "categories_list": list_categories(),
             }
         )
