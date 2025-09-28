@@ -1,6 +1,7 @@
 import httpx
 import requests
 from langchain.tools import tool
+from dataclasses import dataclass
 from typing import Dict, Any, List
 from datetime import datetime, date, time, timedelta
 
@@ -52,24 +53,22 @@ def parse_time(value: str) -> time:
     return datetime.strptime(value, "%H:%M").time()
 
 
-def generate_time_slots(start_t: time, end_t: time, interval_minutes: int) -> List[str]:
+def generate_time_slots(start_t: time, end_t: time, interval: int):
     slots = []
     cur = datetime.combine(datetime.today(), start_t)
     end_dt = datetime.combine(datetime.today(), end_t)
-    if interval_minutes <= 0:
+    if interval <= 0:
         raise ValueError("Interval must be positive")
     while cur < end_dt:
         slots.append(cur.strftime("%H:%M"))
-        cur += timedelta(minutes=interval_minutes)
+        cur += timedelta(minutes=interval)
     return slots
 
 
-def is_day_open(blane: Dict[str, Any], user_date: date) -> bool:
-    jours_open = blane.get("jours_creneaux") or []
+def is_day_open(blane: Dict[str, Any], user_date: date):
+    jours_open = blane.get("jours_creneaux")
     if not jours_open:
         return True
-    # convert english weekday to french as in original
-    weekday_en = user_date.strftime("%A")
     mapping = {
         "Monday": "Lundi",
         "Tuesday": "Mardi",
@@ -79,7 +78,7 @@ def is_day_open(blane: Dict[str, Any], user_date: date) -> bool:
         "Saturday": "Samedi",
         "Sunday": "Dimanche",
     }
-    return mapping.get(weekday_en, "") in jours_open
+    return mapping.get(user_date.strftime("%A"), "") in jours_open
 
 
 # -----------------------------
@@ -99,9 +98,7 @@ def get_payment_routes(blane: Dict[str, Any]) -> List[str]:
     ] or ["cash"]
 
 
-def calculate_pricing(
-    blane: Dict[str, Any], city: str, quantity: int
-) -> Dict[str, Any]:
+def calculate_pricing(blane: Dict[str, Any], city: str, quantity: int):
     base_price = 0.0
     try:
         base_price = float(blane.get("price_current", 0) or 0)
@@ -142,77 +139,6 @@ def calculate_pricing(
         "payment_routes": payment_routes,
         "partiel_percent": partiel_percent,
     }
-
-
-# -----------------------------
-# Prompt builder
-# -----------------------------
-
-
-def build_reservation_prompt(blane: Dict[str, Any]) -> str:
-    name = blane.get("name", "Unknown")
-    type_time = blane.get("type_time")
-    is_order = blane.get("type") == "order"
-    is_digital = blane.get("is_digital", False)
-    is_reservation = blane.get("type") == "reservation"
-
-    start = format_date(blane.get("start_date", ""))
-    end = format_date(blane.get("expiration_date", ""))
-    date_range = f"{start} to {end}" if start and end else "Unknown"
-
-    payment_routes = get_payment_routes(blane)
-
-    lines: List[str] = [
-        f"To proceed with your reservation for the blane *{name}*, I need the following details:\n"
-    ]
-
-    # Base fields (1-4)
-    lines.append("*Name*:")
-    lines.append("*Email*:")
-    lines.append("*Phone Number*:")
-    lines.append("*City*:")
-
-    if is_order:
-        lines.append("*Quantity*: (How many units?)")
-        lines.append("*Comments*: (Any special instructions?)")
-        if not is_digital:
-            lines.append("*Delivery Address*: (Place where order has to be delivered)")
-
-    elif is_reservation and type_time == "time":
-        slots = "Unknown"
-        try:
-            heure_debut_str = blane.get("heure_debut")
-            heure_fin_str = blane.get("heure_fin")
-            interval = int(blane.get("intervale_reservation", 0) or 0)
-            parsed = None
-            for fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%H:%M:%S", "%H:%M"):
-                try:
-                    sd = datetime.strptime(heure_debut_str, fmt).time()
-                    ed = datetime.strptime(heure_fin_str, fmt).time()
-                    parsed = (sd, ed)
-                    break
-                except Exception:
-                    continue
-            if parsed and interval > 0:
-                slots = ", ".join(generate_time_slots(parsed[0], parsed[1], interval))
-        except Exception:
-            slots = "Invalid time format"
-
-        lines.append(f"*Date*: (Available: {date_range}) Date Format: YYYY-MM-DD")
-        lines.append(f"*Time*: (Available slots: {slots}) Time Format: HH:MM")
-        lines.append(f"*Quantity*: (How many people attending?)")
-        lines.append(f"*Comments*: (Any requests?)")
-
-    elif is_reservation and type_time == "date":
-        lines.append(f"*Start Date*: (Between {date_range}) Date Format: YYYY-MM-DD")
-        lines.append(f"*End Date*: (Between {date_range}) Date Format: YYYY-MM-DD")
-        lines.append(f"*Quantity*: (How many people attending?)")
-        lines.append(f"*Comments*: (Any requests?)")
-
-    lines.append(f"Payment methods available: {', '.join(payment_routes)}")
-    lines.append("Please specify your preferred payment method when booking.")
-
-    return "\n".join(lines).strip()
 
 
 # -----------------------------
@@ -343,48 +269,137 @@ def prepare_reservation_prompt(blane_id: int) -> str:
         blane_id (int): The ID of the blane to prepare a reservation prompt for.
 
     Returns:
-        str: A formatted reservation prompt with details about the blane,
-             or an error message if the blane could not be fetched.
+        str: A formatted reservation prompt with details about the blane, or an error message if the blane could not be fetched.
     """
     try:
         blane = fetch_blane(blane_id)
     except Exception as e:
         return f"❌ Error fetching blane: {e}"
 
-    return build_reservation_prompt(blane)
+    # Build reservation prompt
+    name = blane.get("name", "Unknown")
+    type_time = blane.get("type_time")
+    is_order = blane.get("type") == "order"
+    is_digital = blane.get("is_digital", False)
+    is_reservation = blane.get("type") == "reservation"
+
+    start = format_date(blane.get("start_date", ""))
+    end = format_date(blane.get("expiration_date", ""))
+    date_range = f"{start} to {end}" if start and end else "Unknown"
+
+    payment_routes = get_payment_routes(blane)
+
+    lines: List[str] = [
+        f"To proceed with your reservation for the blane *{name}*, I need the following details:\n"
+    ]
+
+    # Base fields (1-4)
+    lines.append("*Name*:")
+    lines.append("*Email*:")
+    lines.append("*Phone Number*:")
+    lines.append("*City*:")
+
+    if is_order:
+        lines.append("*Quantity*: (How many units?)")
+        lines.append("*Comments*: (Any special instructions?)")
+        if not is_digital:
+            lines.append("*Delivery Address*: (Place where order has to be delivered)")
+
+    elif is_reservation and type_time == "time":
+        slots = "Unknown"
+        try:
+            heure_debut_str = blane.get("heure_debut")
+            heure_fin_str = blane.get("heure_fin")
+            interval = int(blane.get("intervale_reservation", 0) or 0)
+            parsed = None
+            for fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%H:%M:%S", "%H:%M"):
+                try:
+                    sd = datetime.strptime(heure_debut_str, fmt).time()
+                    ed = datetime.strptime(heure_fin_str, fmt).time()
+                    parsed = (sd, ed)
+                    break
+                except Exception:
+                    continue
+            if parsed and interval > 0:
+                slots = ", ".join(generate_time_slots(parsed[0], parsed[1], interval))
+        except Exception:
+            slots = "Invalid time format"
+
+        lines.append(f"*Date*: (Available: {date_range}) Date Format: YYYY-MM-DD")
+        lines.append(f"*Time*: (Available slots: {slots}) Time Format: HH:MM")
+        lines.append(f"*Quantity*: (How many people attending?)")
+        lines.append(f"*Comments*: (Any requests?)")
+
+    elif is_reservation and type_time == "date":
+        lines.append(f"*Start Date*: (Between {date_range}) Date Format: YYYY-MM-DD")
+        lines.append(f"*End Date*: (Between {date_range}) Date Format: YYYY-MM-DD")
+        lines.append(f"*Quantity*: (How many people attending?)")
+        lines.append(f"*Comments*: (Any requests?)")
+
+    lines.append(f"Payment methods available: {', '.join(payment_routes)}")
+    lines.append("Please specify your preferred payment method when booking.")
+
+    return "\n".join(lines).strip()
+
+
+@dataclass
+class ReservationInput:
+    """
+    Shared parameters for reservation/order tools.
+
+    Required:
+    - blane_id (int): The ID of the blane to reserve or order.
+    - name (str): Client's name.
+    - email (str): Client's email.
+    - phone (str): Client's phone number.
+    - city (str): City where the reservation or order applies.
+    - quantity (int): Number of units reserved or ordered.
+    - payment_method (str): Payment method - must be "cash", "partiel", or "online".
+
+    Conditional:
+    - res_date (str): Reservation date (YYYY-MM-DD). Required if type="reservation".
+    - res_time (str): Reservation time (HH:MM). Required if type_time="time".
+    - end_date (str): End date for multi-day reservations. Required if type_time="date".
+
+    Optional:
+    - comments (str): Notes for the booking. Default: "N/A".
+    - delivery_address (str): Address for delivery (non-digital orders only). Default: "N/A".
+    """
+
+    blane_id: int
+    name: str
+    email: str
+    phone: str
+    city: str
+    quantity: int = 1
+    res_date: str = "N/A"
+    res_time: str = "N/A"
+    end_date: str = "N/A"
+    comments: str = "N/A"
+    payment_method: str = "cash"
+    delivery_address: str = "N/A"
 
 
 @tool("preview_reservation")
-def preview_reservation(
-    blane_id: int,
-    city: str = "N/A",
-    date: str = "N/A",
-    end_date: str = "N/A",
-    time: str = "N/A",
-    quantity: int = 1,
-    comments: str = "N/A",
-    delivery_address: str = "N/A",
-    payment_method: str = "cash",
-) -> str:
+def preview_reservation(input: ReservationInput) -> str:
     """
-    Preview the reservation or order details before confirming,
-    including validation of dates, times, and pricing.
-
-    Parameters:
-    - blane_id (int): The ID of the blane to preview.
-    - city (str): City where the reservation or order applies. Default: "N/A".
-    - date (str): Reservation date (YYYY-MM-DD). Default: "N/A".
-    - end_date (str): End date for multi-day reservations. Default: "N/A".
-    - time (str): Reservation time (HH:MM). Default: "N/A".
-    - quantity (int): Number of units reserved or ordered. Default: 1.
-    - comments (str): Optional notes for the booking. Default: "N/A".
-    - delivery_address (str): Address for delivery (non-digital orders only). Default: "N/A".
-    - payment_method (str): Payment method - must be "cash", "partiel", or "online". Default: "cash".
-
-    Returns:
-        str: A formatted preview of the booking details,
-             or an error message if validation fails.
+    Preview a reservation or order. Accepts a ReservationInput and returns a formatted summary of the booking details, including validation of dates, times, and pricing.
     """
+    (
+        blane_id,
+        name,
+        email,
+        phone,
+        city,
+        quantity,
+        res_date,
+        res_time,
+        end_date,
+        comments,
+        payment_method,
+        delivery_address,
+    ) = vars(input).values()
+
     try:
         blane = fetch_blane(blane_id)
     except Exception as e:
@@ -401,16 +416,18 @@ def preview_reservation(
     try:
         if blane_type == "reservation":
             if type_time == "time":
-                if not (date and date != "N/A"):
+                if not (res_date and res_date != "N/A"):
                     return "❌ Please provide a date (YYYY-MM-DD)."
-                datetime.strptime(date, "%Y-%m-%d")
-                if not (time and time != "N/A"):
+                datetime.strptime(res_date, "%Y-%m-%d")
+                if not (res_time and res_time != "N/A"):
                     return "❌ Please provide a time (HH:MM)."
-                datetime.strptime(time, "%H:%M")
+                datetime.strptime(res_time, "%H:%M")
             elif type_time == "date":
-                if not (date and end_date and date != "N/A" and end_date != "N/A"):
+                if not (
+                    res_date and end_date and res_date != "N/A" and end_date != "N/A"
+                ):
                     return "❌ Please provide start and end dates (YYYY-MM-DD)."
-                datetime.strptime(date, "%Y-%m-%d")
+                datetime.strptime(res_date, "%Y-%m-%d")
                 datetime.strptime(end_date, "%Y-%m-%d")
     except Exception:
         return "❌ Invalid date or time format."
@@ -425,9 +442,9 @@ def preview_reservation(
 
     if blane_type == "reservation":
         if type_time == "time":
-            lines += [f"- Date: {date}", f"- Time: {time}"]
+            lines += [f"- Date: {res_date}", f"- Time: {res_time}"]
         else:
-            lines += [f"- Start Date: {date}", f"- End Date: {end_date}"]
+            lines += [f"- Start Date: {res_date}", f"- End Date: {end_date}"]
         lines += [f"- Quantity: {quantity} (ou personnes)"]
     else:
         lines += [f"- Quantity: {quantity}"]
@@ -435,6 +452,9 @@ def preview_reservation(
             lines.append(f"- Delivery Address: {delivery_address}")
 
     lines += [
+        f"- Name: {name}",
+        f"- Email: {email}",
+        f"- Phone: {phone}",
         f"- City: {city}",
         f"- Comments: {comments}",
         f"- Selected Payment: {payment_method}",
@@ -454,41 +474,25 @@ def preview_reservation(
 
 
 @tool("create_reservation")
-def create_reservation(
-    blane_id: int,
-    name: str = "N/A",
-    email: str = "N/A",
-    phone: str = "N/A",
-    city: str = "N/A",
-    date: str = "N/A",
-    end_date: str = "N/A",
-    time: str = "N/A",
-    quantity: int = 1,
-    comments: str = "N/A",
-    delivery_address: str = "N/A",
-    payment_method: str = "cash",
-) -> str:
+def create_reservation(input: ReservationInput) -> str:
     """
-    Create a reservation or order for a specific blane, validating session, client info, and reservation constraints (dates, times, delivery address, etc.).
-
-    Parameters:
-    - blane_id (int): The ID of the blane to reserve or order.
-    - name (str): Client's name. Default: "N/A".
-    - email (str): Client's email. Default: "N/A".
-    - phone (str): Client's phone number. Default: "N/A".
-    - city (str): City where the reservation or order applies. Default: "N/A".
-    - date (str): Reservation date (YYYY-MM-DD). Default: "N/A".
-    - end_date (str): End date for multi-day reservations. Default: "N/A".
-    - time (str): Reservation time (HH:MM). Default: "N/A".
-    - quantity (int): Number of units reserved or ordered. Default: 1.
-    - comments (str): Optional notes for the booking. Default: "N/A".
-    - delivery_address (str): Address for delivery (non-digital orders only). Default: "N/A".
-    - payment_method (str): Payment method - must be "cash", "partiel", or "online". Default: "cash".
-
-    Returns:
-        str: A success message with payment information if applicable,
-             or an error message if creation fails.
+    Create a reservation or order. Accepts a ReservationInput and submits it to the backend, validating session, client info, and constraints. Returns success status and payment instructions if applicable.
     """
+    (
+        blane_id,
+        name,
+        email,
+        phone,
+        city,
+        quantity,
+        res_date,
+        res_time,
+        end_date,
+        comments,
+        payment_method,
+        delivery_address,
+    ) = vars(input).values()
+
     try:
         blane = fetch_blane(blane_id)
     except Exception as e:
@@ -508,13 +512,13 @@ def create_reservation(
 
     # --- Validation ---
     if blane_type == "reservation":
-        if date == "N/A":
+        if res_date == "N/A":
             return "❌ Reservation requires a date."
 
         try:
-            user_date = parse_date(date)
+            user_date = parse_date(res_date)
             if user_date < datetime.today().date():
-                return f"❌ Reservation date {date} must not be in the past."
+                return f"❌ Reservation date {res_date} must not be in the past."
         except Exception:
             return "❌ Invalid date format. Use YYYY-MM-DD."
 
@@ -527,7 +531,7 @@ def create_reservation(
                 heure_fin = parse_time_only(blane.get("heure_fin"))
                 interval = int(blane.get("intervale_reservation", 0) or 0)
                 valid_slots = generate_time_slots(heure_debut, heure_fin, interval)
-                if time not in valid_slots:
+                if res_time not in valid_slots:
                     return f"🕓 Invalid time. Choose from: {', '.join(valid_slots)}"
             except Exception:
                 return "❌ Error parsing blane time slots."
@@ -536,7 +540,7 @@ def create_reservation(
             try:
                 start_dt = parse_datetime(blane.get("start_date"))
                 end_dt = parse_datetime(blane.get("expiration_date"))
-                user_start = datetime.strptime(date, "%Y-%m-%d")
+                user_start = datetime.strptime(res_date, "%Y-%m-%d")
                 user_end = datetime.strptime(end_date, "%Y-%m-%d")
                 if not (start_dt.date() <= user_start.date() <= end_dt.date()):
                     return f"❌ Start date must be within {start_dt.date()} to {end_dt.date()}"
@@ -565,8 +569,8 @@ def create_reservation(
 
     payload = {
         **base_payload,
-        "date": date if blane_type == "reservation" else None,
-        "time": time if type_time == "time" else None,
+        "date": res_date if blane_type == "reservation" else None,
+        "time": res_time if type_time == "time" else None,
         "end_date": end_date if type_time == "date" else None,
         "delivery_address": (
             "Online Service"
