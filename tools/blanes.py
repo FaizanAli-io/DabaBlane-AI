@@ -15,11 +15,11 @@ from .config import (
 )
 
 from .utils import (
-    get_token,
     format_date,
     format_time,
     normalize_text,
     list_categories,
+    get_auth_headers,
 )
 
 
@@ -110,12 +110,8 @@ def resolve_location(location: str | None):
 
 
 def get_all_blanes_simple():
-    token = get_token()
-    if not token:
-        return []
-
     url = f"{BASEURLBACK}/getBlanesByCategory"
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    headers = get_auth_headers()
 
     all_blanes = []
     current_page = 1
@@ -208,27 +204,16 @@ def list_blanes(start: int = 1, offset: int = 10) -> str:
 
     Returns a readable list with range info.
     """
-    # Validate parameters
+    start = max(start, 1)
+    offset = max(min(offset, 25), 5)
 
-    if start < 1:
-        start = 1
-    if offset < 1:
-        offset = 10
-    if offset > 25:
-        offset = 25
-
-    token = get_token()
-    if not token:
-        return "❌ Failed to retrieve token. Please try again later."
-
-    # Calculate which API page we need and how many items to fetch
     # Since API uses 1-based pagination with per_page
-    api_page = ((start - 1) // 10) + 1  # Which API page contains our start position
+    api_page = ((start - 1) // 10) + 1
     items_needed = offset
 
     # We might need multiple API pages if offset spans across pages
     url = f"{BASEURLBACK}/blanes"
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    headers = get_auth_headers()
 
     all_fetched_blanes = []
     total_blanes = 0
@@ -374,12 +359,8 @@ def get_blane_info(blane_id: int):
     Gives details of any blane using its ID.
     Returns a detailed, user-friendly WhatsApp message about a specific blane.
     """
-    token = get_token()
-    if not token:
-        return "❌ Failed to retrieve token. Please try again later."
-
     url = f"{BASEURLBACK}/blanes/{blane_id}"
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    headers = get_auth_headers()
 
     try:
         response = httpx.get(url, headers=headers)
@@ -570,11 +551,7 @@ def find_blanes_by_name_or_link(
     if not user_text:
         return "❌ Please provide a valid blane name or link."
 
-    token = get_token()
-    if not token:
-        return "❌ Failed to retrieve token. Please try again later."
-
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    headers = get_auth_headers()
 
     # Fetch all active blanes with pagination
     collected = []
@@ -683,11 +660,7 @@ def list_blanes_by_district_and_category(
     start = max(1, int(start))
     offset = max(1, min(25, int(offset)))
 
-    token = get_token()
-    if not token:
-        return "❌ Failed to retrieve token. Please try again later."
-
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    headers = get_auth_headers()
 
     # Normalize filters
     city_norm = normalize_text(city)
@@ -875,11 +848,7 @@ def list_blanes_by_location_and_category(
     start = max(1, int(start))
     offset = max(1, min(25, int(offset)))
 
-    token = get_token()
-    if not token:
-        return "❌ Failed to retrieve token. Please try again later."
-
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    headers = get_auth_headers()
 
     # Normalize input filters
     city_norm = normalize_text(city)

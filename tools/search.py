@@ -6,24 +6,16 @@ from typing import Optional, List, Tuple, Dict, Any
 
 from .config import BASEURLBACK, district_map
 
-from .utils import get_token, normalize_text, list_categories
+from .utils import (
+    normalize_text,
+    list_categories,
+    get_auth_headers,
+)
 
 
 # -----------------------
 # Helper functions
 # -----------------------
-def get_token_or_error() -> Tuple[Optional[str], Optional[str]]:
-    try:
-        token = get_token()
-    except Exception as e:
-        return None, f"❌ Failed to retrieve token. Please try again later. ({str(e)})"
-    if not token:
-        return None, "❌ Failed to retrieve token. Please try again later."
-    return token, None
-
-
-def build_headers(token: str) -> Dict[str, str]:
-    return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
 
 def fetch_blanes_paginated(
@@ -259,10 +251,7 @@ def list_blanes_by_location_and_category(
             return f"❌ Error fetching categories: {str(e)}"
 
     # --- Auth ---
-    token, token_err = get_token_or_error()
-    if token_err:
-        return token_err
-    headers = build_headers(token)
+    headers = get_auth_headers()
 
     # --- Resolve category id ---
     category_id, cat_err = resolve_category_id(category_norm)
@@ -369,10 +358,7 @@ def find_blanes_by_name_or_link(
     if not user_text:
         return "❌ Please provide a valid blane name or link."
 
-    token, token_err = get_token_or_error()
-    if token_err:
-        return token_err
-    headers = build_headers(token)
+    headers = get_auth_headers()
 
     blanes_data, fetch_err = fetch_blanes_paginated(
         headers,

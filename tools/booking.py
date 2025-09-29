@@ -1,5 +1,4 @@
 import httpx
-import requests
 from langchain.tools import tool
 from dataclasses import dataclass
 from typing import Dict, Any, List
@@ -8,7 +7,6 @@ from datetime import datetime, date, time, timedelta
 from .config import BASEURLBACK, BASEURLFRONT, AGENT_URL
 
 from .utils import (
-    get_token,
     format_date,
     parse_datetime,
     parse_time_only,
@@ -30,14 +28,28 @@ def safe_json_get(resp: httpx.Response) -> Dict[str, Any]:
 
 def fetch_blane(blane_id: int) -> Dict[str, Any]:
     headers = get_auth_headers()
+
     url = f"{BASEURLBACK}/blanes/{blane_id}"
     resp = httpx.get(url, headers=headers)
+
     resp.raise_for_status()
     data = safe_json_get(resp)
+
     blane = data.get("data")
     if not blane:
         raise ValueError(f"Blane with ID {blane_id} not found")
     return blane
+
+
+def fetch_data(endpoint: str, headers: Dict[str, str]) -> Dict[str, Any]:
+    try:
+        with httpx.Client(headers=headers, timeout=10.0) as client:
+            response = client.get(BASEURLBACK + endpoint)
+            if response.status_code == 200:
+                return {"data": response.json().get("data", [])}
+            return {"error": response.text, "status": response.status_code}
+    except Exception as e:
+        return {"error": str(e)}
 
 
 # -----------------------------
@@ -260,7 +272,7 @@ def get_available_periods(blane_id: int) -> str:
         return f"❌ Error fetching periods: {str(e)}"
 
 
-@tool("before_create_reservation")
+@tool("prepare_reservation_prompt")
 def prepare_reservation_prompt(blane_id: int) -> str:
     """
     Prepare a booking information prompt for a specific blane before creating a reservation.
@@ -283,33 +295,30 @@ def prepare_reservation_prompt(blane_id: int) -> str:
     is_digital = blane.get("is_digital", False)
     is_reservation = blane.get("type") == "reservation"
 
+    payment_routes = get_payment_routes(blane)
     start = format_date(blane.get("start_date", ""))
     end = format_date(blane.get("expiration_date", ""))
     date_range = f"{start} to {end}" if start and end else "Unknown"
 
-    payment_routes = get_payment_routes(blane)
-
-    lines: List[str] = [
-        f"To proceed with your reservation for the blane *{name}*, I need the following details:\n"
+    lines = [
+        f"To proceed with your reservation for the blane *{name} - (ID: {blane_id})*, I need the following details:\n",
+        "*Name*:",
+        "*Email*:",
+        "*Phone Number*:",
     ]
-
-    # Base fields (1-4)
-    lines.append("*Name*:")
-    lines.append("*Email*:")
-    lines.append("*Phone Number*:")
-    lines.append("*City*:")
 
     if is_order:
         lines.append("*Quantity*: (How many units?)")
-        lines.append("*Comments*: (Any special instructions?)")
+        lines.append("*Comments*: (Any special instructions? Optional)")
         if not is_digital:
-            lines.append("*Delivery Address*: (Place where order has to be delivered)")
+            lines.append("*City*: (City for delivery)")
+            lines.append("*Delivery Address*: (Full address for delivery)")
 
     elif is_reservation and type_time == "time":
         slots = "Unknown"
         try:
-            heure_debut_str = blane.get("heure_debut")
             heure_fin_str = blane.get("heure_fin")
+            heure_debut_str = blane.get("heure_debut")
             interval = int(blane.get("intervale_reservation", 0) or 0)
             parsed = None
             for fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%H:%M:%S", "%H:%M"):
@@ -352,7 +361,6 @@ class ReservationInput:
     - name (str): Client's name.
     - email (str): Client's email.
     - phone (str): Client's phone number.
-    - city (str): City where the reservation or order applies.
     - quantity (int): Number of units reserved or ordered.
     - payment_method (str): Payment method - must be "cash", "partiel", or "online".
 
@@ -361,21 +369,24 @@ class ReservationInput:
     - res_time (str): Reservation time (HH:MM). Required if type_time="time".
     - end_date (str): End date for multi-day reservations. Required if type_time="date".
 
+    For Non-digital orders:
+    - city (str): City for delivery. Default: "N/A".
+    - delivery_address (str): Address for delivery. Default: "N/A".
+
     Optional:
-    - comments (str): Notes for the booking. Default: "N/A".
-    - delivery_address (str): Address for delivery (non-digital orders only). Default: "N/A".
+    - comments (str): Notes for the booking. Default: "None".
     """
 
     blane_id: int
     name: str
     email: str
     phone: str
-    city: str
+    city: str = "N/A"
     quantity: int = 1
     res_date: str = "N/A"
     res_time: str = "N/A"
     end_date: str = "N/A"
-    comments: str = "N/A"
+    comments: str = "None"
     payment_method: str = "cash"
     delivery_address: str = "N/A"
 
@@ -432,44 +443,48 @@ def preview_reservation(input: ReservationInput) -> str:
     except Exception:
         return "❌ Invalid date or time format."
 
-    blane_name = blane.get("name", "Unknown")
     lines = [
-        "Great. I'll need the booking info.",
-        "",
-        "Please review:",
-        f"- Blane: {blane_name}",
+        "Please preview the following reservation/order details for "
+        + blane.get("name", "Unknown Blane")
+        + f" (Blane ID: {blane_id})\n",
+        f"Name: {name}",
+        f"Email: {email}",
+        f"Phone: {phone}",
+        f"Comments: {comments}",
+        f"Selected Payment: {payment_method}",
+        (
+            f"Quantity: {quantity}" + "(ou personnes)"
+            if blane_type == "reservation"
+            else ""
+        ),
     ]
 
     if blane_type == "reservation":
-        if type_time == "time":
-            lines += [f"- Date: {res_date}", f"- Time: {res_time}"]
-        else:
-            lines += [f"- Start Date: {res_date}", f"- End Date: {end_date}"]
-        lines += [f"- Quantity: {quantity} (ou personnes)"]
+        lines += (
+            [f"Date: {res_date}", f"Time: {res_time}"]
+            if type_time == "time"
+            else [f"Start Date: {res_date}", f"End Date: {end_date}"]
+        )
     else:
-        lines += [f"- Quantity: {quantity}"]
-        if delivery_address and delivery_address != "N/A":
-            lines.append(f"- Delivery Address: {delivery_address}")
-
-    lines += [
-        f"- Name: {name}",
-        f"- Email: {email}",
-        f"- Phone: {phone}",
-        f"- City: {city}",
-        f"- Comments: {comments}",
-        f"- Selected Payment: {payment_method}",
-    ]
+        lines += [
+            *(f"City: {city}" if city and city != "N/A" else []),
+            *(
+                f"Delivery Address: {delivery_address}"
+                if delivery_address and delivery_address != "N/A"
+                else []
+            ),
+        ]
 
     if blane_type == "order" and not blane.get("is_digital"):
-        lines.append(f"- Delivery Cost: {delivery_cost} MAD")
+        lines.append(f"Delivery Cost: {delivery_cost} MAD")
 
-    lines.append(f"- Total: {total_price} MAD")
+    lines.append(f"Total: {total_price} MAD")
     if payment_method == "partiel" and partiel_price:
-        lines.append(f"- Due now (partial): {int(partiel_price)} MAD")
+        lines.append(f"Due now (partial): {int(partiel_price)} MAD")
     elif payment_method == "online":
-        lines.append(f"- Due now: {int(total_price)} MAD")
+        lines.append(f"Due now: {int(total_price)} MAD")
 
-    lines += ["", "Confirm booking?", "[Confirm] [Edit] [Cancel]"]
+    lines += ["\nConfirm booking?", "[Confirm] [Edit] [Cancel]"]
     return "\n".join(lines)
 
 
@@ -582,10 +597,8 @@ def create_reservation(input: ReservationInput) -> str:
     # --- Submit reservation/order ---
     try:
         headers = get_auth_headers()
-        api_endpoint = (
-            f"{BASEURLFRONT}/reservations"
-            if blane_type == "reservation"
-            else f"{BASEURLFRONT}/orders"
+        api_endpoint = BASEURLFRONT + (
+            "/reservations" if blane_type == "reservation" else "/orders"
         )
         res = httpx.post(api_endpoint, headers=headers, json=payload)
         res.raise_for_status()
@@ -618,42 +631,28 @@ def list_reservations(email: str) -> Dict[str, Any]:
     """
     List all reservations and orders associated with a given client email.
 
-    Parameters:
-        email (str): The client's email to search reservations and orders for.
+    Args:
+        email (str): Client's email.
 
     Returns:
-        dict: A dictionary with two keys:
-            - "reservations": List of reservations linked to the email.
-            - "orders": List of orders linked to the email.
-            May also include "reservations_error" or "orders_error" if API calls fail,
-            or "error" if token retrieval or a general error occurs.
+        dict: {
+            "orders": [...],
+            "reservations": [...],
+            "errors": { "reservations": "...", "orders": "..." }
+        }
     """
-    token = None
-    try:
-        token = get_token()
-        if not token:
-            return {"error": "❌ Failed to retrieve token."}
-    except Exception:
-        return {"error": "❌ Failed to retrieve token."}
+    headers = get_auth_headers()
+    orders_result = fetch_data(f"/orders?email={email}", headers)
+    reservations_result = fetch_data(f"/reservations?email={email}", headers)
 
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    result: Dict[str, Any] = {"reservations": [], "orders": []}
+    errors = {}
+    if "error" in orders_result:
+        errors["orders"] = orders_result["error"]
+    if "error" in reservations_result:
+        errors["reservations"] = reservations_result["error"]
 
-    try:
-        res_url = f"{BASEURLBACK}/reservations?email={email}"
-        res_response = requests.get(res_url, headers=headers)
-        if res_response.status_code == 200:
-            result["reservations"] = res_response.json().get("data", [])
-        else:
-            result["reservations_error"] = res_response.text
-
-        orders_url = f"{BASEURLBACK}/orders?email={email}"
-        orders_response = requests.get(orders_url, headers=headers)
-        if orders_response.status_code == 200:
-            result["orders"] = orders_response.json().get("data", [])
-        else:
-            result["orders_error"] = orders_response.text
-
-        return result
-    except Exception as e:
-        return {"error": str(e)}
+    return {
+        "reservations": reservations_result.get("data", []),
+        "orders": orders_result.get("data", []),
+        "errors": errors,
+    }

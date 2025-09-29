@@ -13,20 +13,25 @@ def pprint(data):
 
 
 def get_token():
-    url = f"{BASEURL}/login"
-    headers = {"Content-Type": "application/json"}
-    payload = {"email": "admin@dabablane.com", "password": "admin"}
-    response = requests.post(url, headers=headers, json=payload)
-    if response.status_code == 200:
-        return response.json()["data"]["user_token"]
-    else:
-        return "Try again later."
+    try:
+        response = requests.post(
+            f"{BASEURL}/login",
+            headers={"Content-Type": "application/json"},
+            json={"email": "admin@dabablane.com", "password": "admin"},
+        )
+
+        if response.status_code == 200:
+            return response.json()["data"]["user_token"], None
+        else:
+            return None, f"Failed to retrieve token {response.text}"
+    except Exception as e:
+        return None, f"❌ Failed to retrieve token. ({str(e)})"
 
 
 def get_auth_headers():
-    token = get_token()
+    token, error = get_token()
     if not token:
-        raise ValueError("Failed to retrieve token")
+        raise ValueError(error)
     return {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
@@ -86,11 +91,8 @@ def normalize_text(text: str) -> str:
 
 
 def list_categories():
-    token = get_token()
-    if not token:
-        return "❌ Failed to retrieve token. Please try again later."
     url = f"{BASEURLBACK}/categories"
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    headers = get_auth_headers()
     try:
         response = httpx.get(url, headers=headers)
         response.raise_for_status()

@@ -6,7 +6,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain.agents import AgentExecutor, create_tool_calling_agent
 
 from app.database import SessionLocal
-from app.chatbot.models import Session, Message
+from app.chatbot.models import Message
 
 from tools.auth import authenticate_email
 from tools.utils import list_categories, pprint
@@ -45,7 +45,6 @@ I operate under the **RISEN Protocol** to stay secure, reliable, and honest.
 ### 📌 Session Context
 - **Date**: {date}
 - **Session ID**: {session_id}
-- **Client Email**: {client_email}
 
 ---
 
@@ -74,7 +73,7 @@ I live and breathe **DabaBlane** — never suggest other websites or services.
 
 **Booking Flow (strict):**
 1. `get_blane_info(blane_id)` → confirm selection.
-2. `before_create_reservation(blane_id)` → tell user what info is needed.
+2. `prepare_reservation_prompt(blane_id)` → tell user what info is needed.
 3. Collect details.
 4. `preview_reservation(...)` → recap + price.
 5. Confirm with user.
@@ -103,6 +102,7 @@ I live and breathe **DabaBlane** — never suggest other websites or services.
 - Never mention or recommend external websites/services.
 - Always confirm the blane and details before creating any reservation.
 - If user asks for a booking site or wants more details, suggest https://dabablane.com/ directly.
+- When listing blanes, or showing information for a particular blane, always share ID so that it stays in chat history and you can refer back to it easily.
 
 ---
 
@@ -148,9 +148,9 @@ class BookingToolAgent:
 
         self.prompt = ChatPromptTemplate.from_messages(
             [
+                ("placeholder", "{agent_scratchpad}"),
                 ("system", system_prompt),
                 ("human", "{input}"),
-                ("placeholder", "{agent_scratchpad}"),
             ]
         ).partial()
 
@@ -166,18 +166,9 @@ class BookingToolAgent:
             [f"{i+1}. {sender}: {msg}" for i, (sender, msg) in enumerate(raw_history)]
         )
 
-        db = SessionLocal()
-        session = db.query(Session).filter_by(id=session_id).first()
-        db.close()
-
-        client_email = session.client_email if session else None
-        base_payload = {
-            "input": incoming_text,
-            "session_id": session_id,
-            "client_email": client_email,
-        }
-
+        base_payload = {"input": incoming_text, "session_id": session_id}
         pprint(base_payload)
+
         response = self.executor.invoke(
             {
                 **base_payload,
