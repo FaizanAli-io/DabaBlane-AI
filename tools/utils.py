@@ -81,27 +81,25 @@ def parse_time_only(time_str):
 def normalize_text(text: str) -> str:
     if text is None:
         return ""
-    # Normalize unicode and strip diacritics
     nfkd = unicodedata.normalize("NFKD", str(text))
     without_diacritics = "".join(ch for ch in nfkd if not unicodedata.combining(ch))
     lowered = without_diacritics.lower().strip()
-    # Collapse multiple whitespace
     lowered = re.sub(r"\s+", " ", lowered)
     return lowered
 
 
 def list_categories():
-    url = f"{BASEURLBACK}/categories"
-    headers = get_auth_headers()
     try:
-        response = httpx.get(url, headers=headers)
+        response = httpx.get(
+            url=f"{BASEURLBACK}/categories",
+            headers=get_auth_headers(),
+        )
         response.raise_for_status()
-        data = response.json()
 
-        categories = data.get("data", [])
-        result = {cat["id"]: cat["name"] for cat in categories}
-
-        return result
+        return [
+            {"category_id": cat["id"], "category_name": cat["name"]}
+            for cat in response.json().get("data", [])
+        ]
 
     except httpx.HTTPStatusError as e:
         print(f"❌ HTTP Error {e.response.status_code}: {e.response.text}")

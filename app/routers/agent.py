@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from fastapi import APIRouter, Depends
 from datetime import datetime, timezone
+from fastapi.responses import RedirectResponse
 
 from app.database import get_db
 from app.database import SessionLocal
@@ -13,10 +14,14 @@ router = APIRouter()
 agent = BookingToolAgent()
 
 
-# Request model for chat
 class ChatInput(BaseModel):
     session_id: str
     message: str
+
+
+@router.get("/", include_in_schema=False)
+async def root():
+    return RedirectResponse(url="/docs")
 
 
 @router.post("/chat")
