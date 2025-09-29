@@ -8,8 +8,7 @@ from langchain.agents import AgentExecutor, create_tool_calling_agent
 from app.database import SessionLocal
 from app.chatbot.models import Message
 
-from tools.auth import authenticate_email
-from tools.utils import list_categories, pprint
+from tools.utils import list_categories
 
 from tools.blanes import (
     get_blane_info,
@@ -23,9 +22,9 @@ from tools.booking import (
     list_reservations,
     create_reservation,
     preview_reservation,
-    prepare_reservation_prompt,
     get_available_periods,
     get_available_time_slots,
+    prepare_reservation_prompt,
 )
 
 
@@ -130,7 +129,6 @@ def get_chat_history(session_id: str):
 class BookingToolAgent:
     def __init__(self):
         self.tools = [
-            authenticate_email,
             introduction_message,
             get_blane_info,
             find_blanes_by_name_or_link,
@@ -166,12 +164,10 @@ class BookingToolAgent:
             [f"{i+1}. {sender}: {msg}" for i, (sender, msg) in enumerate(raw_history)]
         )
 
-        base_payload = {"input": incoming_text, "session_id": session_id}
-        pprint(base_payload)
-
         response = self.executor.invoke(
             {
-                **base_payload,
+                "input": incoming_text,
+                "session_id": session_id,
                 "district_map": district_map,
                 "date": date.today().isoformat(),
                 "chat_history": formatted_history,

@@ -8,10 +8,6 @@ from urllib.parse import urlparse, unquote
 from .config import (
     BASEURLBACK,
     district_map,
-    blane_keywords,
-    location_keywords,
-    greeting_keywords,
-    irrelevant_keywords,
 )
 
 from .utils import (
@@ -174,7 +170,7 @@ def introduction_message() -> str:
     Also when user says "Salam" in any form - respond with "Walikum Assalam" instead of Hello.
     """
 
-    categories = ", ".join(list_categories().values())
+    categories = ", ".join([cat["category_name"] for cat in list_categories()])
 
     return f"""Bonjour! Je suis *DabaGPT*, votre assistant de réservation intelligent. 🤖✨
 
@@ -449,69 +445,6 @@ def get_blane_info(blane_id: int):
         return f"❌ HTTP Error {e.response.status_code}: {e.response.text}"
 
 
-@tool("check_message_relevance")
-def check_message_relevance(user_message: str) -> str:
-    """
-    MANDATORY FIRST TOOL: Check if user message is relevant to blanes/dabablane business.
-    This tool MUST be called before any other tool for every user interaction.
-    For greeting messages like hi, hey, hello, bonjour, call `introduction_message` instead.
-
-    Args:
-        user_message: User's input message
-
-    Returns:
-        "relevant" if message is about blanes/booking/reservations
-        "greeting" if it's a greeting message
-        "irrelevant" with redirect message if not related to blanes
-    """
-
-    if not user_message or not user_message.strip():
-        return (
-            "irrelevant: Please provide a valid message about blanes or reservations."
-        )
-
-    message_lower = user_message.lower().strip()
-
-    # Calculate relevance scores
-    blane_score = sum(1 for keyword in blane_keywords if keyword in message_lower)
-    location_score = sum(1 for keyword in location_keywords if keyword in message_lower)
-    greeting_score = sum(1 for keyword in greeting_keywords if keyword in message_lower)
-    irrelevant_score = sum(
-        1 for keyword in irrelevant_keywords if keyword in message_lower
-    )
-
-    # Determine category and relevance
-    total_positive = blane_score + location_score + greeting_score
-
-    if irrelevant_score > 0 and total_positive == 0:
-        return "irrelevant: I'm DabaGPT, specialized in helping with blane reservations, bookings, and finding activities, restaurants, and spa services in Casablanca. How can I help you with that?"
-
-    if greeting_score > 0:
-        return "greeting"
-
-    if blane_score > 0 or location_score > 0 or total_positive > 0:
-        return "relevant"
-
-    # Try to find any possible connection to blanes
-    possible_blane_connection = any(
-        [
-            "suggest" in message_lower,
-            "looking for" in message_lower,
-            "want" in message_lower,
-            "help" in message_lower,
-            "show me" in message_lower,
-            "find" in message_lower,
-            "search" in message_lower,
-        ]
-    )
-
-    if possible_blane_connection:
-        return "relevant"
-
-    # Default to irrelevant
-    return "irrelevant: I'm DabaGPT, specialized in blane reservations and bookings. I can help you find restaurants, spas, activities, and more in Casablanca. What interests you?"
-
-
 @tool("find_blanes_by_name_or_link")
 def find_blanes_by_name_or_link(
     query: str, limit: int = 10, score_threshold: int = 60
@@ -539,9 +472,7 @@ def find_blanes_by_name_or_link(
             ):
                 parsed = urlparse(q if q.startswith("http") else f"https://{q}")
                 last = [seg for seg in parsed.path.split("/") if seg][-1:] or [""]
-                candidate = unquote(last[0])
-                # Convert common slug separators to spaces
-                candidate = candidate.replace("-", " ").replace("_", " ").strip()
+                candidate = unquote(last[0]).replace("-", " ").replace("_", " ").strip()
                 return candidate if candidate else q
             return q
         except Exception:
