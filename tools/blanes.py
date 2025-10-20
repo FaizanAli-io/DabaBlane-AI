@@ -149,7 +149,7 @@ def get_all_blanes_simple():
     return all_blanes
 
 
-@tool("introduction_message", return_direct=True)
+@tool("introduction_message")
 def introduction_message() -> str:
     """
     Returns the introduction message for DabaGPT booking assistant.
@@ -174,18 +174,22 @@ def introduction_message() -> str:
 
     return f"""Bonjour! Je suis *DabaGPT*, votre assistant de réservation intelligent. 🤖✨
 
-    Je peux vous aider à :
-    ‣   🔍 Trouver des *blanes* (par catégorie ou localisation)
-    ‣   📅 Vérifier la disponibilité
-    ‣   🛎️ Réserver un blane pour vous
-    ‣   💸 Vous guider dans le processus de paiement et de réservation
+Je peux vous aider à :
+‣ 🔍 Trouver des *blanes* (par catégorie ou localisation)
+‣ 📅 Vérifier la disponibilité
+‣ 🛎️ Réserver un blane pour vous
+‣ 💸 Vous guider dans le processus de paiement et de réservation
 
-    Pour vous montrer les meilleures options, j'aurai besoin de quelques détails :
-       ‣ *Catégorie* (par ex: {categories})
-       ‣ *Quartier* (Si tu veux)
-       ‣ *Ville*
+Pour vous montrer les meilleures options, j'aurai besoin de quelques détails :
+‣ *Catégorie* (par ex: {categories})
+‣ *Quartier*
+‣ *Ville*
 
-    Donnez-moi ces informations et je m'occupe du reste. 🚀"""
+👉 Pour plus d'informations et des visuels des blanes, visitez :
+🌐 https://dabablane.com
+
+Donnez-moi ces informations et je m'occupe du reste. 🚀
+"""
 
 
 @tool("list_blanes")

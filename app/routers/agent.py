@@ -59,7 +59,7 @@ def chat_with_agent(request: ChatInput, db: Session = Depends(get_db)):
 @router.get("/session/list")
 def list_sessions():
     db = SessionLocal()
-    sessions = db.query(SessionModel).order_by(SessionModel.created_at.desc()).all()
+    sessions = db.query(SessionModel).order_by(SessionModel.created_at.asc()).all()
     db.close()
     return [
         {"id": session.id, "created_at": session.created_at} for session in sessions

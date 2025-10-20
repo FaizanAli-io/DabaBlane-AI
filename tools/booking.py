@@ -1,13 +1,13 @@
 import httpx
 from langchain.tools import tool
-from dataclasses import dataclass
 from typing import Dict, Any, List
 from datetime import datetime, date, time, timedelta
+
+from .inputs import ReservationInput
 
 from .config import BASEURLBACK, BASEURLFRONT, AGENT_URL
 
 from .utils import (
-    format_date,
     parse_datetime,
     parse_time_only,
     get_auth_headers,
@@ -52,11 +52,6 @@ def fetch_data(endpoint: str, headers: Dict[str, str]) -> Dict[str, Any]:
         return {"error": str(e)}
 
 
-# -----------------------------
-# Date / Time helpers
-# -----------------------------
-
-
 def parse_date(value: str) -> date:
     return datetime.strptime(value, "%Y-%m-%d").date()
 
@@ -93,11 +88,6 @@ def is_day_open(blane: Dict[str, Any], user_date: date):
     return mapping.get(user_date.strftime("%A"), "") in jours_open
 
 
-# -----------------------------
-# Pricing & Payment
-# -----------------------------
-
-
 def get_payment_routes(blane: Dict[str, Any]) -> List[str]:
     return [
         method
@@ -108,6 +98,28 @@ def get_payment_routes(blane: Dict[str, Any]) -> List[str]:
         }.items()
         if supported
     ] or ["cash"]
+
+
+def get_date_range(blane) -> str:
+    start_raw = blane.get("start_date")
+    end_raw = blane.get("expiration_date")
+
+    def parse_date(d):
+        if not d:
+            return None
+        try:
+            return datetime.strptime(d, "%Y-%m-%d %H:%M:%S").date()
+        except ValueError:
+            return datetime.strptime(d, "%Y-%m-%d").date()
+
+    start = parse_date(start_raw)
+    end = parse_date(end_raw)
+
+    today = date.today()
+    if start and start < today:
+        start = today
+
+    return f"{start} to {end}" if start and end else "Unknown"
 
 
 def calculate_pricing(blane: Dict[str, Any], city: str, quantity: int):
@@ -168,8 +180,7 @@ def get_available_time_slots(blane_id: int, date: str) -> str:
         date (str): The date (YYYY-MM-DD) to fetch available slots.
 
     Returns:
-        str: A formatted string listing available time slots with remaining capacity,
-             or an error message if none are available or an issue occurs.
+        str: A formatted string listing available time slots with remaining capacity, or an error message if none are available or an issue occurs.
     """
     try:
         blane = fetch_blane(blane_id)
@@ -295,16 +306,14 @@ def prepare_reservation_prompt(blane_id: int) -> str:
     is_digital = blane.get("is_digital", False)
     is_reservation = blane.get("type") == "reservation"
 
+    date_range = get_date_range(blane)
     payment_routes = get_payment_routes(blane)
-    start = format_date(blane.get("start_date", ""))
-    end = format_date(blane.get("expiration_date", ""))
-    date_range = f"{start} to {end}" if start and end else "Unknown"
 
     lines = [
         f"To proceed with your reservation for the blane *{name} - (ID: {blane_id})*, I need the following details:\n",
         "*Name*:",
         "*Email*:",
-        "*Phone Number*:",
+        "*Phone Number:* (with country code)",
     ]
 
     if is_order:
@@ -346,49 +355,10 @@ def prepare_reservation_prompt(blane_id: int) -> str:
         lines.append(f"*Comments*: (Any requests?)")
 
     lines.append(f"Payment methods available: {', '.join(payment_routes)}")
-    lines.append("Please specify your preferred payment method when booking.")
+    if len(payment_routes) > 1:
+        lines.append("Please specify your preferred payment method when booking.")
 
     return "\n".join(lines).strip()
-
-
-@dataclass
-class ReservationInput:
-    """
-    Shared parameters for reservation/order tools.
-
-    Required:
-    - blane_id (int): The ID of the blane to reserve or order.
-    - name (str): Client's name.
-    - email (str): Client's email.
-    - phone (str): Client's phone number.
-    - quantity (int): Number of units reserved or ordered.
-    - payment_method (str): Payment method - must be "cash", "partiel", or "online".
-
-    Conditional:
-    - res_date (str): Reservation date (YYYY-MM-DD). Required if type="reservation".
-    - res_time (str): Reservation time (HH:MM). Required if type_time="time".
-    - end_date (str): End date for multi-day reservations. Required if type_time="date".
-
-    For Non-digital orders:
-    - city (str): City for delivery. Default: "N/A".
-    - delivery_address (str): Address for delivery. Default: "N/A".
-
-    Optional:
-    - comments (str): Notes for the booking. Default: "None".
-    """
-
-    blane_id: int
-    name: str
-    email: str
-    phone: str
-    city: str = "N/A"
-    quantity: int = 1
-    res_date: str = "N/A"
-    res_time: str = "N/A"
-    end_date: str = "N/A"
-    comments: str = "None"
-    payment_method: str = "cash"
-    delivery_address: str = "N/A"
 
 
 @tool("preview_reservation")
@@ -396,20 +366,22 @@ def preview_reservation(input: ReservationInput) -> str:
     """
     Preview a reservation or order. Accepts a ReservationInput and returns a formatted summary of the booking details, including validation of dates, times, and pricing.
     """
-    (
-        blane_id,
-        name,
-        email,
-        phone,
-        city,
-        quantity,
-        res_date,
-        res_time,
-        end_date,
-        comments,
-        payment_method,
-        delivery_address,
-    ) = vars(input).values()
+    if not input.is_valid():
+        return input.validation_messages
+
+    data = vars(input)
+    blane_id = data.get("blane_id")
+    name = data.get("name")
+    email = data.get("email")
+    phone = data.get("phone")
+    city = data.get("city")
+    quantity = data.get("quantity")
+    res_date = data.get("res_date")
+    res_time = data.get("res_time")
+    end_date = data.get("end_date")
+    comments = data.get("comments")
+    payment_method = data.get("payment_method")
+    delivery_address = data.get("delivery_address")
 
     try:
         blane = fetch_blane(blane_id)
@@ -493,20 +465,22 @@ def create_reservation(input: ReservationInput) -> str:
     """
     Create a reservation or order. Accepts a ReservationInput and submits it to the backend, validating session, client info, and constraints. Returns success status and payment instructions if applicable.
     """
-    (
-        blane_id,
-        name,
-        email,
-        phone,
-        city,
-        quantity,
-        res_date,
-        res_time,
-        end_date,
-        comments,
-        payment_method,
-        delivery_address,
-    ) = vars(input).values()
+    if not input.is_valid():
+        return input.validation_messages
+
+    data = vars(input)
+    blane_id = data.get("blane_id")
+    name = data.get("name")
+    email = data.get("email")
+    phone = data.get("phone")
+    city = data.get("city")
+    quantity = data.get("quantity")
+    res_date = data.get("res_date")
+    res_time = data.get("res_time")
+    end_date = data.get("end_date")
+    comments = data.get("comments")
+    payment_method = data.get("payment_method")
+    delivery_address = data.get("delivery_address")
 
     try:
         blane = fetch_blane(blane_id)
@@ -623,7 +597,7 @@ def create_reservation(input: ReservationInput) -> str:
         else:
             return f"✅ Success! {data}, but payment reference missing."
 
-    return f"✅ Success! {data}"
+    return f"✅ Success! {data}, Please check your WhatsApp number for booking status."
 
 
 @tool("list_reservations")
