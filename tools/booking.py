@@ -88,14 +88,14 @@ def is_day_open(blane: Dict[str, Any], user_date: date):
     return mapping.get(user_date.strftime("%A"), "") in jours_open
 
 
-def get_payment_routes(blane: Dict[str, Any]) -> List[str]:
+def get_payment_routes(blane, display):
     return [
-        method
-        for method, supported in {
-            "partiel": blane.get("partiel"),
-            "online": blane.get("online"),
-            "cash": blane.get("cash"),
-        }.items()
+        display_name if display else method_name
+        for display_name, method_name, supported in [
+            ("Paiement sur place", "cash", blane.get("cash")),
+            ("Paiement en ligne", "online", blane.get("online")),
+            ("Avance en ligne", "partiel", blane.get("partiel")),
+        ]
         if supported
     ] or ["cash"]
 
@@ -143,7 +143,7 @@ def calculate_pricing(blane: Dict[str, Any], city: str, quantity: int):
             delivery_cost = 0.0
         total += delivery_cost
 
-    payment_routes = get_payment_routes(blane)
+    payment_routes = get_payment_routes(blane, False)
 
     partiel_price = 0
     partiel_percent = 0
@@ -287,6 +287,7 @@ def get_available_periods(blane_id: int) -> str:
 def prepare_reservation_prompt(blane_id: int) -> str:
     """
     Prepare a booking information prompt for a specific blane before creating a reservation.
+    Always invoke this before asking the user for booking details.
 
     Parameters:
         blane_id (int): The ID of the blane to prepare a reservation prompt for.
@@ -301,13 +302,17 @@ def prepare_reservation_prompt(blane_id: int) -> str:
 
     # Build reservation prompt
     name = blane.get("name", "Unknown")
-    type_time = blane.get("type_time")
-    is_order = blane.get("type") == "order"
-    is_digital = blane.get("is_digital", False)
-    is_reservation = blane.get("type") == "reservation"
 
+    booking_type = blane.get("type")
+    type_time = blane.get("type_time")
+    is_digital = blane.get("is_digital", False)
+
+    is_order = booking_type == "order"
+    is_reservation = booking_type == "reservation"
+
+    payment_routes = get_payment_routes(blane, True)
+    payment_routes = "\n\t- ".join(payment_routes)
     date_range = get_date_range(blane)
-    payment_routes = get_payment_routes(blane)
 
     lines = [
         f"To proceed with your reservation for the blane *{name} - (ID: {blane_id})*, I need the following details:\n",
@@ -354,9 +359,8 @@ def prepare_reservation_prompt(blane_id: int) -> str:
         lines.append(f"*Quantity*: (How many people attending?)")
         lines.append(f"*Comments*: (Any requests?)")
 
-    lines.append(f"Payment methods available: {', '.join(payment_routes)}")
-    if len(payment_routes) > 1:
-        lines.append("Please specify your preferred payment method when booking.")
+    lines.append("Payment methods available:\n\t- " + payment_routes)
+    lines.append("Please specify your preferred payment method when booking.")
 
     return "\n".join(lines).strip()
 
@@ -366,9 +370,6 @@ def preview_reservation(input: ReservationInput) -> str:
     """
     Preview a reservation or order. Accepts a ReservationInput and returns a formatted summary of the booking details, including validation of dates, times, and pricing.
     """
-    if not input.is_valid():
-        return input.validation_messages
-
     data = vars(input)
     blane_id = data.get("blane_id")
     name = data.get("name")
@@ -387,6 +388,9 @@ def preview_reservation(input: ReservationInput) -> str:
         blane = fetch_blane(blane_id)
     except Exception as e:
         return f"❌ Error fetching blane: {e}"
+
+    if not input.is_valid(blane):
+        return input.validation_messages
 
     blane_type = blane.get("type")
     type_time = blane.get("type_time")
@@ -464,10 +468,11 @@ def preview_reservation(input: ReservationInput) -> str:
 def create_reservation(input: ReservationInput) -> str:
     """
     Create a reservation or order. Accepts a ReservationInput and submits it to the backend, validating session, client info, and constraints. Returns success status and payment instructions if applicable.
-    """
-    if not input.is_valid():
-        return input.validation_messages
 
+    INSTRUCTIONS:
+    - Don't mention cancellation in your response.
+    - After successful booking, always include the following message exactly: Thank you for booking with us! If you have any more questions or need further assistance, just let me know or contact us directly at +212615170064.
+    """
     data = vars(input)
     blane_id = data.get("blane_id")
     name = data.get("name")
@@ -485,10 +490,10 @@ def create_reservation(input: ReservationInput) -> str:
     try:
         blane = fetch_blane(blane_id)
     except Exception as e:
-        return f"❌ Error fetching blane: {str(e)}"
+        return f"❌ Error fetching blane: {e}"
 
-    if not email or "@" not in email or "." not in email.split("@")[-1]:
-        return "❌ Please provide a valid email address (e.g., user@example.com)."
+    if not input.is_valid(blane):
+        return input.validation_messages
 
     pricing = calculate_pricing(blane, city, quantity)
 

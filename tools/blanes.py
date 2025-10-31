@@ -152,22 +152,11 @@ def get_all_blanes_simple():
 @tool("introduction_message")
 def introduction_message() -> str:
     """
-    Returns the introduction message for DabaGPT booking assistant.
+    Provides the introduction message for DabaGPT, the booking assistant.
 
-    Use this tool when:
-    - User sends greeting messages like "hello", "hi", "salam", "assalam o alaikum"
-    - User asks "what can you do" or "help me"
-    - User starts a new conversation
-    - User asks about the bot's capabilities or services
-    - User sends any initial greeting or inquiry about services
+    The agent must call this tool directly in these cases and return its output exactly as provided — without modification, rewording, or additions.
 
-    The tool provides a comprehensive introduction explaining:
-    - Bot identity as DabaGPT booking assistant
-    - Available services (finding blanes, checking availability, making reservations)
-    - Required information needed from users (category, city, district, sub-district, date)
-    - Friendly greeting response in local language (French/Roman)
-
-    Also when user says "Salam" in any form - respond with "Walikum Assalam" instead of Hello.
+    Use this tool when the user greets (e.g., "hello", "hi", "salam", "assalam o alaikum"), starts a new chat, or asks about the bot's services or capabilities.
     """
 
     categories = ", ".join([cat["category_name"] for cat in list_categories()])
@@ -497,7 +486,7 @@ def find_blanes_by_name_or_link(
                 "status": "active",
                 "sort_by": "created_at",
                 "sort_order": "desc",
-                "per_page": 100,
+                "per_page": 500,
                 "page": page,
             }
             resp = httpx.get(
