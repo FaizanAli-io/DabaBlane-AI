@@ -40,11 +40,14 @@ const Auth = {
       const baseUrl = this.elements.envSelect.value;
 
       try {
-        const res = await fetch(`${baseUrl}/interface/verify-password`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ password })
-        });
+        const res = await fetch(
+          `https://agent.dabablane.com/interface/verify-password`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ password })
+          }
+        );
 
         if (res.ok) {
           sessionStorage.setItem("authenticated", "true");
