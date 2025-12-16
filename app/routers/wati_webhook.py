@@ -2,13 +2,14 @@ import re
 import os
 import time
 import httpx
+import asyncio
 import logging
 import traceback
 from dotenv import load_dotenv
-from fastapi import APIRouter, Request
 from datetime import datetime, timezone
 from sqlalchemy.exc import OperationalError
 from fastapi.responses import PlainTextResponse
+from fastapi import APIRouter, Request, BackgroundTasks
 
 from app.database import SessionLocal
 from app.agent.booking_agent import BookingToolAgent
@@ -37,9 +38,6 @@ def formatting(text):
 
 
 def db_operation_with_retry(operation_func, max_retries=3, delay=1):
-    """
-    Retry database operations on connection failures
-    """
     for attempt in range(max_retries):
         try:
             return operation_func()
@@ -73,56 +71,36 @@ def verify_webhook(request: Request):
     return PlainTextResponse("Invalid token", status_code=403)
 
 
-@router.post("/meta-webhook")
-async def receive_message(request: Request):
+async def background_whatsapp_flow(message: dict):
     db = None
-
     try:
-        data = await request.json()
-        logger.info("📩 Incoming data: %s", data)
-
-        entry = data.get("entry", [])[0]
-        changes = entry.get("changes", [])[0]
-        value = changes.get("value", {})
-        messages = value.get("messages")
-
-        if not messages:
-            logger.info("🔕 No new message received.")
-            return {"status": "ignored"}
-
-        message = messages[0]
-        wa_id = message["from"]
-        session_id = wa_id
-
-        # Ensure it's a text message
-        if "text" not in message:
-            logger.warning("⚠️ Non-text message received. Ignored.")
-            return {"status": "ignored"}
-
+        session_id = message["from"]
         text = message["text"]["body"]
-        logger.info(f"✅ Message from {wa_id}: {text}")
 
-        # Trigger typing indicator before processing
-        await send_typing_indicator(message["id"])
+        # 1️⃣ Typing indicator
+        try:
+            await send_typing_indicator(message["id"])
+        except Exception as e:
+            logger.warning(f"Failed to send typing indicator: {e}")
 
-        # Create database session with retry logic
+        # 2️⃣ Create DB session
         def create_db_session():
             return SessionLocal()
 
         db = db_operation_with_retry(create_db_session)
 
-        # --- Session handling with retry ---
+        # 3️⃣ Get or create session
         def get_or_create_session():
             session = db.query(SessionModel).filter_by(id=session_id).first()
             if not session:
-                session = SessionModel(id=session_id, whatsapp_number=wa_id)
+                session = SessionModel(id=session_id, whatsapp_number=session_id)
                 db.add(session)
                 db.commit()
             return session
 
         session = db_operation_with_retry(get_or_create_session)
 
-        # --- Save user message with retry ---
+        # 4️⃣ Save user message
         def save_user_message():
             user_message = Message(
                 session_id=session_id,
@@ -136,14 +114,14 @@ async def receive_message(request: Request):
 
         db_operation_with_retry(save_user_message)
 
-        # --- Get bot response ---
+        # 5️⃣ Get bot response
         response = agent.get_response(
             incoming_text=text,
             session_id=session_id,
         )
         formatted_response = formatting(response)
 
-        # --- Save bot response with retry ---
+        # 6️⃣ Save bot response
         def save_bot_message():
             bot_message = Message(
                 sender="bot",
@@ -157,38 +135,26 @@ async def receive_message(request: Request):
 
         db_operation_with_retry(save_bot_message)
 
-        # Send email if new conversation
+        # 7️⃣ Send new chat email
         send_new_chat_email(session, text, db)
 
-        logger.info(f"🤖 Bot reply to {wa_id}: {formatted_response}")
-        await send_whatsapp_message(wa_id, formatted_response)
-
-    except OperationalError as e:
-        logger.error("❌ Database connection error in webhook: %s", e)
-        # Return a graceful response even if database fails
-        if "wa_id" in locals():
-            try:
-                await send_whatsapp_message(
-                    wa_id,
-                    "Sorry, I'm experiencing technical difficulties. Please try again in a moment.",
-                )
-            except:
-                pass
-        return {"status": "database_error", "error": "temporary_database_issue"}
+        # 8️⃣ Send WhatsApp message
+        try:
+            await send_whatsapp_message(session_id, formatted_response)
+            logger.info(f"🤖 Bot reply to {session_id}: {formatted_response}")
+        except Exception as e:
+            logger.error(f"Failed to send WhatsApp message: {e}")
 
     except Exception as e:
-        logger.error("❌ Exception in webhook: %s", e)
+        logger.error(f"Unexpected error in background flow: {e}")
         traceback.print_exc()
-        # Send error message to user if possible
-        if "wa_id" in locals():
+        if "session_id" in locals():
             try:
                 await send_whatsapp_message(
-                    wa_id, "Sorry, something went wrong. Please try again."
+                    session_id, "Sorry, something went wrong. Please try again."
                 )
             except:
                 pass
-        return {"status": "error"}
-
     finally:
         if db:
             try:
@@ -196,6 +162,35 @@ async def receive_message(request: Request):
             except:
                 logger.warning("Failed to close database session")
 
+
+@router.post("/meta-webhook")
+async def receive_message(request: Request):
+    try:
+        data = await request.json()
+        logger.info("📩 Incoming data: %s", data)
+
+        entry = data.get("entry", [])[0]
+        changes = entry.get("changes", [])[0]
+        value = changes.get("value", {})
+        messages = value.get("messages")
+
+        if not messages:
+            logger.info("🔕 No new message received.")
+            return {"status": "ignored"}
+
+        if "text" not in messages[0]:
+            logger.warning("⚠️ Non-text message received. Ignored.")
+            return {"status": "ignored"}
+
+        # Schedule the full background flow
+        asyncio.create_task(background_whatsapp_flow(messages[0]))
+
+    except Exception as e:
+        logger.error(f"❌ Exception in webhook: {e}")
+        traceback.print_exc()
+        return {"status": "error"}
+
+    # Immediately return 200 OK to WhatsApp
     return {"status": "ok"}
 
 
