@@ -83,7 +83,12 @@ class BookingToolAgent:
             llm=self.llm, tools=self.tools, prompt=self.prompt
         )
 
-        self.executor = AgentExecutor(agent=self.agent, tools=self.tools, verbose=True)
+        self.executor = AgentExecutor(
+            verbose=True,
+            agent=self.agent,
+            tools=self.tools,
+            return_intermediate_steps=True,
+        )
 
     def get_response(self, incoming_text: str, session_id: str):
         raw_history = get_chat_history(session_id)
@@ -101,5 +106,9 @@ class BookingToolAgent:
                 "categories_list": list_categories(),
             }
         )
+
+        for action, observation in response.get("intermediate_steps", []):
+            if action.tool == "introduction_message":
+                return observation
 
         return response["output"]

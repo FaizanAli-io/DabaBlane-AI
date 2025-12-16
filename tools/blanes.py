@@ -153,10 +153,7 @@ def get_all_blanes_simple():
 def introduction_message() -> str:
     """
     Provides the introduction message for DabaGPT, the booking assistant.
-
-    The agent must call this tool directly in these cases and return its output exactly as provided — without modification, rewording, or additions.
-
-    Use this tool ONLY ONCE when the user greets (e.g., "hello", "hi", "salam", "assalam o alaikum"), starts a new chat, or asks about the bot's services or capabilities. Do NOT call it repeatedly.
+    Use this tool ONLY ONCE when the user greets you. Do NOT call it repeatedly.
     """
 
     categories = ", ".join([cat["category_name"] for cat in list_categories()])
