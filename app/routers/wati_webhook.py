@@ -12,6 +12,7 @@ from fastapi.responses import PlainTextResponse
 
 from app.database import SessionLocal
 from app.agent.booking_agent import BookingToolAgent
+from app.email.email_service import send_new_chat_email
 from app.chatbot.models import Session as SessionModel, Message
 
 # Load environment variables
@@ -24,8 +25,9 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
 VERIFY_TOKEN = os.getenv("META_VERIFY_TOKEN")
-WHATSAPP_TOKEN = os.getenv("META_ACCESS_TOKEN")
 PHONE_NUMBER_ID = os.getenv("META_PHONE_NUMBER_ID")
+WHATSAPP_ACCESS_TOKEN = os.getenv("META_ACCESS_TOKEN")
+WHATSAPP_API_VERSION = "v19.0"
 
 
 def formatting(text):
@@ -100,6 +102,9 @@ async def receive_message(request: Request):
         text = message["text"]["body"]
         logger.info(f"✅ Message from {wa_id}: {text}")
 
+        # Trigger typing indicator before processing
+        await send_typing_indicator(message["id"])
+
         # Create database session with retry logic
         def create_db_session():
             return SessionLocal()
@@ -132,14 +137,17 @@ async def receive_message(request: Request):
         db_operation_with_retry(save_user_message)
 
         # --- Get bot response ---
-        response = agent.get_response(incoming_text=text, session_id=session_id)
+        response = agent.get_response(
+            incoming_text=text,
+            session_id=session_id,
+        )
         formatted_response = formatting(response)
 
         # --- Save bot response with retry ---
         def save_bot_message():
             bot_message = Message(
-                session_id=session_id,
                 sender="bot",
+                session_id=session_id,
                 content=formatted_response,
                 timestamp=datetime.now(timezone.utc),
             )
@@ -148,6 +156,9 @@ async def receive_message(request: Request):
             return bot_message
 
         db_operation_with_retry(save_bot_message)
+
+        # Send email if new conversation
+        send_new_chat_email(session, text, db)
 
         logger.info(f"🤖 Bot reply to {wa_id}: {formatted_response}")
         await send_whatsapp_message(wa_id, formatted_response)
@@ -189,9 +200,11 @@ async def receive_message(request: Request):
 
 
 async def send_whatsapp_message(recipient_number: str, message: str):
-    url = f"https://graph.facebook.com/v19.0/{PHONE_NUMBER_ID}/messages"
+    url = (
+        f"https://graph.facebook.com/{WHATSAPP_API_VERSION}/{PHONE_NUMBER_ID}/messages"
+    )
     headers = {
-        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
+        "Authorization": f"Bearer {WHATSAPP_ACCESS_TOKEN}",
         "Content-Type": "application/json",
     }
     payload = {
@@ -212,3 +225,23 @@ async def send_whatsapp_message(recipient_number: str, message: str):
         logger.error("❌ Network error while sending message: %s", e)
     except Exception as e:
         logger.error("❌ Unexpected error while sending message: %s", e)
+
+
+async def send_typing_indicator(message_id: str):
+    url = (
+        f"https://graph.facebook.com/{WHATSAPP_API_VERSION}/{PHONE_NUMBER_ID}/messages"
+    )
+    headers = {
+        "Authorization": f"Bearer {WHATSAPP_ACCESS_TOKEN}",
+        "Content-Type": "application/json",
+    }
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "status": "read",
+        "message_id": message_id,
+        "typing_indicator": {"type": "text"},
+    }
+
+    async with httpx.AsyncClient() as client:
+        await client.post(url, headers=headers, json=payload)

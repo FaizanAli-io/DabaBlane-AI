@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.chatbot import models
 from app.database import engine
@@ -22,6 +23,10 @@ app.add_middleware(
     allow_headers=["*"],
     allow_credentials=True,
 )
+
+# Mount static files
+app.mount("/css", StaticFiles(directory="static/css"), name="css")
+app.mount("/js", StaticFiles(directory="static/js"), name="js")
 
 app.include_router(agent.router)
 app.include_router(payment.router)
