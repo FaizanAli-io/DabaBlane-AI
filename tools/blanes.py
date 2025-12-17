@@ -1,3 +1,4 @@
+import os
 import httpx
 from enum import Enum
 from fuzzywuzzy import fuzz
@@ -17,6 +18,8 @@ from .utils import (
     list_categories,
     get_auth_headers,
 )
+
+language = os.getenv("LANGUAGE", "FRENCH")
 
 
 class PaginationSentiment(Enum):
@@ -152,30 +155,27 @@ def get_all_blanes_simple():
 @tool("introduction_message")
 def introduction_message() -> str:
     """
-    Provides the introduction message for DabaGPT, the booking assistant.
-    Use this tool ONLY ONCE when the user greets you. Do NOT call it repeatedly.
+    Provides the introduction message for DabaGPT.
+    Use this tool ONLY ONCE when the user greets you.
     """
 
-    categories = ", ".join([cat["category_name"] for cat in list_categories()])
-
-    return f"""Bonjour! Je suis *DabaGPT*, votre assistant de réservation intelligent. 🤖✨
-
-Je peux vous aider à :
-‣ 🔍 Trouver des *blanes* (par catégorie ou localisation)
-‣ 📅 Vérifier la disponibilité
-‣ 🛎️ Réserver un blane pour vous
-‣ 💸 Vous guider dans le processus de paiement et de réservation
-
-Pour vous montrer les meilleures options, j'aurai besoin de quelques détails :
-‣ *Catégorie* (par ex: {categories})
-‣ *Quartier*
-‣ *Ville*
-
-👉 Pour plus d'informations et des visuels des blanes, visitez :
-🌐 https://dabablane.com
-
-Donnez-moi ces informations et je m'occupe du reste. 🚀
-"""
+    return {
+        "FRENCH": (
+            "Bonjour, je suis *DabaGPT*, l'assistant de réservation des établissements "
+            "partenaires DabaBlane.\n\n"
+            "Je suis à votre service pour traiter votre demande de réservation, "
+            "vérifier les disponibilités et assurer la prise en charge avec l'établissement.\n\n"
+            "Pour quel établissement souhaitez-vous réserver ?\n\n"
+            "La réservation est également possible via dabablane.com ou l'application."
+        ),
+        "ENGLISH": (
+            "Hello, I'm *DabaGPT*, the reservation assistant for DabaBlane partner establishments.\n\n"
+            "I handle reservation requests, check availability, and manage the booking process "
+            "with the establishment.\n\n"
+            "Which establishment would you like to book?\n\n"
+            "Reservations can also be made via dabablane.com or the mobile app."
+        ),
+    }[language]
 
 
 @tool("list_blanes")

@@ -1,3 +1,4 @@
+import os
 from datetime import date
 from dotenv import load_dotenv
 
@@ -28,17 +29,15 @@ from tools.booking import (
     prepare_reservation_prompt,
 )
 
-
+from .system_prompts import prompts
 from tools.config import district_map
 
 
 load_dotenv()
 
-language = "fr"
-filename = f"app/agent/system_prompt_{language}.txt"
+language = os.getenv("LANGUAGE", "FRENCH")
 
-with open(filename, "r") as file:
-    system_prompt = file.read()
+system_prompt = prompts[language]
 
 
 def get_chat_history(session_id: str):
