@@ -115,10 +115,7 @@ async def background_whatsapp_flow(message: dict):
         db_operation_with_retry(save_user_message)
 
         # 5️⃣ Get bot response
-        response = agent.get_response(
-            incoming_text=text,
-            session_id=session_id,
-        )
+        response = agent.get_response(incoming_text=text, session_id=session_id)
         formatted_response = formatting(response)
 
         # 6️⃣ Save bot response
@@ -134,14 +131,16 @@ async def background_whatsapp_flow(message: dict):
             return bot_message
 
         db_operation_with_retry(save_bot_message)
+        logger.info(f"Bot response for {session_id} saved to DB.")
 
         # 7️⃣ Send new chat email
         send_new_chat_email(session, text, db)
+        logger.info(f"New chat email sent for session {session_id}.")
 
         # 8️⃣ Send WhatsApp message
         try:
             await send_whatsapp_message(session_id, formatted_response)
-            logger.info(f"🤖 Bot reply to {session_id}: {formatted_response}")
+            logger.info(f"Bot reply to {session_id}: {formatted_response}")
         except Exception as e:
             logger.error(f"Failed to send WhatsApp message: {e}")
 
@@ -210,16 +209,17 @@ async def send_whatsapp_message(recipient_number: str, message: str):
     }
 
     try:
+        logger.info(f"Sending WhatsApp message to {recipient_number}")
         async with httpx.AsyncClient(timeout=30.0) as client:  # Increased timeout
             response = await client.post(url, json=payload, headers=headers)
             if response.status_code != 200:
-                logger.error("❌ WhatsApp send failed: %s", response.text)
+                logger.error(f"❌ WhatsApp send failed: {response.text}")
             else:
-                logger.info("✅ Message sent successfully to %s", recipient_number)
+                logger.info(f"✅ Message sent successfully to {recipient_number}")
     except httpx.RequestError as e:
-        logger.error("❌ Network error while sending message: %s", e)
+        logger.error(f"❌ Network error while sending message: {e}")
     except Exception as e:
-        logger.error("❌ Unexpected error while sending message: %s", e)
+        logger.error(f"❌ Unexpected error while sending message: {e}")
 
 
 async def send_typing_indicator(message_id: str):
