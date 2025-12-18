@@ -1,6 +1,5 @@
 import os
 import asyncio
-import logging
 import smtplib
 from email.message import EmailMessage
 from datetime import datetime, timedelta
@@ -9,36 +8,26 @@ from app.database import SessionLocal
 from app.chatbot.models import Session
 
 
-logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO)
-
-
 def send_email(user_number: str, user_message: str):
-    gmail_user = os.getenv("GMAIL_ADDRESS")
-    gmail_password = os.getenv("GMAIL_APP_PASSWORD")
+    brevo_host = "smtp-relay.brevo.com"
+    brevo_user = os.getenv("BREVO_SMTP_USER")
+    brevo_password = os.getenv("BREVO_SMTP_PASSWORD")
 
-    logger.info(f"Preparing to send email to {gmail_user}")
-
-    if not gmail_user or not gmail_password:
-        raise RuntimeError("GMAIL_ADDRESS or GMAIL_APP_PASSWORD not set")
+    if not brevo_user or not brevo_password:
+        raise RuntimeError("BREVO_SMTP_USER or BREVO_SMTP_PASSWORD not set")
 
     subject = "New Message to DabaBlane-AI Chatbot"
-    message = "You have received a new message to DabaBlane-AI Chatbot!\n\n"
-    message += f"From: {user_number}\n\nMessage:{user_message}"
+    message = f"You have received a new message to DabaBlane-AI Chatbot!\n\nFrom: {user_number}\n\nMessage: {user_message}"
 
     msg = EmailMessage()
-    msg["To"] = gmail_user
-    msg["From"] = gmail_user
+    msg["To"] = brevo_user
+    msg["From"] = brevo_user
     msg["Subject"] = subject
     msg.set_content(message)
 
-    logging.info(f"Sending email to {gmail_user} about message from {user_number}")
-
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=10) as server:
-        server.login(gmail_user, gmail_password)
+    with smtplib.SMTP_SSL(brevo_host, 465, timeout=30) as server:
+        server.login(brevo_user, brevo_password)
         server.send_message(msg)
-
-    logging.info("Email sent successfully")
 
 
 def send_new_chat_email_sync(session_id, user_message):

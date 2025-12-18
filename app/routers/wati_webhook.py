@@ -131,11 +131,10 @@ async def background_whatsapp_flow(message: dict):
             return bot_message
 
         db_operation_with_retry(save_bot_message)
-        logger.info(f"Bot response for {session_id} saved to DB.")
 
         # 7️⃣ Send new chat email
-        asyncio.create_task(send_new_chat_email_async(session_id, text))
-        logger.info(f"Launched new chat email task for session {session_id}.")
+        # task = asyncio.create_task(send_new_chat_email_async(session_id, text))
+        # task.add_done_callback(lambda t: log_task_result(t, "Email"))
 
         # 8️⃣ Send WhatsApp message
         try:
@@ -240,3 +239,10 @@ async def send_typing_indicator(message_id: str):
 
     async with httpx.AsyncClient() as client:
         await client.post(url, headers=headers, json=payload)
+
+
+def log_task_result(task: asyncio.Task, name: str):
+    try:
+        task.result()
+    except Exception as e:
+        logger.error(f"{name} task failed: {e}", exc_info=True)
