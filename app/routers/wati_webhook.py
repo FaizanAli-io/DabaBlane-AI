@@ -6,14 +6,14 @@ import asyncio
 import logging
 import traceback
 from dotenv import load_dotenv
+from fastapi import APIRouter, Request
 from datetime import datetime, timezone
 from sqlalchemy.exc import OperationalError
 from fastapi.responses import PlainTextResponse
-from fastapi import APIRouter, Request, BackgroundTasks
 
 from app.database import SessionLocal
 from app.agent.booking_agent import BookingToolAgent
-from app.email.email_service import send_new_chat_email
+from app.email.email_service import send_new_chat_email_async
 from app.chatbot.models import Session as SessionModel, Message
 
 # Load environment variables
@@ -98,7 +98,7 @@ async def background_whatsapp_flow(message: dict):
                 db.commit()
             return session
 
-        session = db_operation_with_retry(get_or_create_session)
+        db_operation_with_retry(get_or_create_session)
 
         # 4️⃣ Save user message
         def save_user_message():
@@ -134,8 +134,8 @@ async def background_whatsapp_flow(message: dict):
         logger.info(f"Bot response for {session_id} saved to DB.")
 
         # 7️⃣ Send new chat email
-        asyncio.create_task(send_new_chat_email(session, text, db))
-        logger.info(f"New chat email task for session {session_id}.")
+        asyncio.create_task(send_new_chat_email_async(session_id, text))
+        logger.info(f"Launched new chat email task for session {session_id}.")
 
         # 8️⃣ Send WhatsApp message
         try:

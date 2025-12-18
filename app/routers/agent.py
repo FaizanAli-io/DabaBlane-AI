@@ -8,7 +8,6 @@ from fastapi.responses import RedirectResponse
 from app.database import get_db
 from app.database import SessionLocal
 from app.agent.booking_agent import BookingToolAgent
-from app.email.email_service import send_new_chat_email
 from app.chatbot.models import Session as SessionModel, Message
 
 router = APIRouter()
@@ -53,10 +52,6 @@ def chat_with_agent(request: ChatInput, db: Session = Depends(get_db)):
     )
     db.add(bot_msg)
     db.commit()
-
-    # Send email if new conversation
-    session = db.query(SessionModel).filter_by(id=session_id).first()
-    send_new_chat_email(session, user_message, db)
 
     return {"response": response_text}
 
