@@ -1,12 +1,19 @@
 import os
+import logging
 import smtplib
 from email.message import EmailMessage
 from datetime import datetime, timedelta
 
 
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
+
+
 def send_email(user_number: str, user_message: str):
     gmail_user = os.getenv("GMAIL_ADDRESS")
     gmail_password = os.getenv("GMAIL_APP_PASSWORD")
+
+    logger.info(f"Preparing to send email to {gmail_user}")
 
     if not gmail_user or not gmail_password:
         raise RuntimeError("GMAIL_ADDRESS or GMAIL_APP_PASSWORD not set")
@@ -21,9 +28,13 @@ def send_email(user_number: str, user_message: str):
     msg["Subject"] = subject
     msg.set_content(message)
 
+    logging.info(f"Sending email to {gmail_user} about message from {user_number}")
+
     with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
         server.login(gmail_user, gmail_password)
         server.send_message(msg)
+
+    logging.info("Email sent successfully")
 
 
 def send_new_chat_email(session, user_message, db):

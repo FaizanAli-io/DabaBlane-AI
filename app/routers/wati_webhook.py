@@ -134,8 +134,8 @@ async def background_whatsapp_flow(message: dict):
         logger.info(f"Bot response for {session_id} saved to DB.")
 
         # 7️⃣ Send new chat email
-        send_new_chat_email(session, text, db)
-        logger.info(f"New chat email sent for session {session_id}.")
+        asyncio.create_task(send_new_chat_email(session, text, db))
+        logger.info(f"New chat email task for session {session_id}.")
 
         # 8️⃣ Send WhatsApp message
         try:
