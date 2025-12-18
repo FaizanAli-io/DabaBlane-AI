@@ -167,7 +167,13 @@ async def background_whatsapp_flow(message: dict):
 async def receive_message(request: Request):
     try:
         data = await request.json()
-        logger.info("📩 Incoming data: %s", data)
+        agent_url = os.getenv("AGENT_URL")
+        redirect = os.getenv("REDIRECT") == "true"
+
+        if agent_url == "https://agent.dabablane.com" and redirect:
+            async with httpx.AsyncClient() as client:
+                await client.post(f"http://localhost:8000/meta-webhook", json=data)
+            return {"status": "redirected"}
 
         entry = data.get("entry", [])[0]
         changes = entry.get("changes", [])[0]
@@ -175,15 +181,17 @@ async def receive_message(request: Request):
         messages = value.get("messages")
 
         if not messages:
-            logger.info("🔕 No new message received.")
             return {"status": "ignored"}
 
         if "text" not in messages[0]:
-            logger.warning("⚠️ Non-text message received. Ignored.")
             return {"status": "ignored"}
 
+        message = messages[0]
+
+        logger.info(f"Incoming message: {message['from']} -> {message['text']['body']}")
+
         # Schedule the full background flow
-        asyncio.create_task(background_whatsapp_flow(messages[0]))
+        asyncio.create_task(background_whatsapp_flow(message))
 
     except Exception as e:
         logger.error(f"❌ Exception in webhook: {e}")
