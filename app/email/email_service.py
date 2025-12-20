@@ -54,7 +54,7 @@ def send_new_chat_email_sync(session_id, user_message):
 
         should_send = (
             last_interaction is None
-            or current_time - last_interaction > timedelta(hours=0)
+            or current_time - last_interaction > timedelta(hours=24)
         )
 
         if should_send:
