@@ -9,24 +9,26 @@ from app.chatbot.models import Session
 
 
 def send_email(user_number: str, user_message: str):
-    brevo_host = "smtp-relay.brevo.com"
-    brevo_user = os.getenv("BREVO_SMTP_USER")
-    brevo_password = os.getenv("BREVO_SMTP_PASSWORD")
+    gmail_host = "smtp.gmail.com"
+    gmail_user = os.getenv("GMAIL_ADDRESS")
+    gmail_password = os.getenv("GMAIL_PASSWORD")
 
-    if not brevo_user or not brevo_password:
-        raise RuntimeError("BREVO_SMTP_USER or BREVO_SMTP_PASSWORD not set")
+    if not gmail_user or not gmail_password:
+        raise RuntimeError("GMAIL_ADDRESS or GMAIL_PASSWORD not set")
 
     subject = "New Message to DabaBlane-AI Chatbot"
     message = f"You have received a new message to DabaBlane-AI Chatbot!\n\nFrom: {user_number}\n\nMessage: {user_message}"
 
     msg = EmailMessage()
-    msg["To"] = brevo_user
-    msg["From"] = brevo_user
+    msg["To"] = gmail_user
+    msg["From"] = gmail_user
     msg["Subject"] = subject
     msg.set_content(message)
 
-    with smtplib.SMTP_SSL(brevo_host, 465, timeout=30) as server:
-        server.login(brevo_user, brevo_password)
+    with smtplib.SMTP(gmail_host, 587, timeout=15) as server:
+        server.starttls()
+
+        server.login(gmail_user, gmail_password)
         server.send_message(msg)
 
 
@@ -43,7 +45,7 @@ def send_new_chat_email_sync(session_id, user_message):
 
         should_send = (
             last_interaction is None
-            or current_time - last_interaction > timedelta(hours=24)
+            or current_time - last_interaction > timedelta(hours=0)
         )
 
         if should_send:

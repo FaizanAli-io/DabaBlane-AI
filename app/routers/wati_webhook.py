@@ -133,13 +133,12 @@ async def background_whatsapp_flow(message: dict):
         db_operation_with_retry(save_bot_message)
 
         # 7️⃣ Send new chat email
-        # task = asyncio.create_task(send_new_chat_email_async(session_id, text))
-        # task.add_done_callback(lambda t: log_task_result(t, "Email"))
+        task = asyncio.create_task(send_new_chat_email_async(session_id, text))
+        task.add_done_callback(lambda t: log_task_result(t, "Email Notification"))
 
         # 8️⃣ Send WhatsApp message
         try:
             await send_whatsapp_message(session_id, formatted_response)
-            logger.info(f"Bot reply to {session_id}: {formatted_response}")
         except Exception as e:
             logger.error(f"Failed to send WhatsApp message: {e}")
 
@@ -209,12 +208,12 @@ async def send_whatsapp_message(recipient_number: str, message: str):
 
     try:
         logger.info(f"Sending WhatsApp message to {recipient_number}")
-        async with httpx.AsyncClient(timeout=30.0) as client:  # Increased timeout
+        async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(url, json=payload, headers=headers)
             if response.status_code != 200:
                 logger.error(f"❌ WhatsApp send failed: {response.text}")
             else:
-                logger.info(f"✅ Message sent successfully to {recipient_number}")
+                logger.info(f"✅ Message sent to {recipient_number}: {message}")
     except httpx.RequestError as e:
         logger.error(f"❌ Network error while sending message: {e}")
     except Exception as e:
@@ -242,7 +241,14 @@ async def send_typing_indicator(message_id: str):
 
 
 def log_task_result(task: asyncio.Task, name: str):
+    if task.cancelled():
+        logger.warning(f"{name} task was cancelled")
+        return
+
     try:
-        task.result()
+        result = task.result()
+        logger.info(f"{name} task result: {result}")
+    except asyncio.CancelledError:
+        logger.warning(f"{name} task was cancelled during execution")
     except Exception as e:
         logger.error(f"{name} task failed: {e}", exc_info=True)
