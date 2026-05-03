@@ -10,6 +10,7 @@ class ReservationInput:
 
     Required Fields:
     - blane_id (int): ID of the blane to reserve/order. Must be positive.
+    - blane_slug (str): Slug of the blane for config retrieval.
     - name (str): Client's full name. Non-empty string.
     - email (str): Client's email. Must be a valid email format.
     - phone (str): Client's phone number. Must include country code in format '+123456789'.
@@ -30,6 +31,7 @@ class ReservationInput:
     """
 
     blane_id: int
+    blane_slug: str
     name: str
     email: str
     phone: str
@@ -52,6 +54,9 @@ class ReservationInput:
 
         if not isinstance(self.blane_id, int) or self.blane_id <= 0:
             messages.append("blane_id must be a positive integer")
+
+        if not isinstance(self.blane_slug, str) or not self.blane_slug.strip():
+            messages.append("blane_slug must be a non-empty string")
 
         if not isinstance(self.name, str) or not self.name.strip():
             messages.append("name must be a non-empty string")
@@ -95,7 +100,7 @@ class ReservationInput:
                         "end_date must be in YYYY-MM-DD format when type_time='date'"
                     )
 
-        if not is_digital:
+        if booking_type == "order" and not is_digital:
             if not isinstance(self.city, str) or not self.city.strip():
                 messages.append("city must be a non-empty string")
 

@@ -1,3 +1,4 @@
+import os
 import re
 import json
 import httpx
@@ -5,7 +6,7 @@ import requests
 import unicodedata
 from datetime import datetime
 
-from .config import BASEURL, BASEURLBACK
+from .config import BASEURL, BASEURLFRONT
 
 
 def pprint(data):
@@ -14,10 +15,12 @@ def pprint(data):
 
 def get_token():
     try:
+        email = os.getenv("AGENT_EMAIL", "agent@dabablane.com")
+        pwd = os.getenv("AGENT_PASSWORD", "agent")
         response = requests.post(
             f"{BASEURL}/login",
             headers={"Content-Type": "application/json"},
-            json={"email": "admin@dabablane.com", "password": "admin"},
+            json={"email": email, "password": pwd},
         )
 
         if response.status_code == 200:
@@ -91,13 +94,18 @@ def normalize_text(text: str) -> str:
 def list_categories():
     try:
         response = httpx.get(
-            url=f"{BASEURLBACK}/categories",
+            url=f"{BASEURLFRONT}/categories",
+            params={"include": "subcategories"},
             headers=get_auth_headers(),
         )
         response.raise_for_status()
 
         return [
-            {"category_id": cat["id"], "category_name": cat["name"]}
+            {
+                "category_id": cat.get("id"),
+                "category_name": cat.get("name"),
+                "category_slug": cat.get("slug"),
+            }
             for cat in response.json().get("data", [])
         ]
 

@@ -7,7 +7,7 @@ from langchain.tools import tool
 from urllib.parse import urlparse, unquote
 
 from .config import (
-    BASEURLBACK,
+    BASEURLFRONT,
     district_map,
 )
 
@@ -109,7 +109,7 @@ def resolve_location(location: str | None):
 
 
 def get_all_blanes_simple():
-    url = f"{BASEURLBACK}/getBlanesByCategory"
+    url = f"{BASEURLFRONT}/blanes"
     headers = get_auth_headers()
 
     all_blanes = []
@@ -122,7 +122,7 @@ def get_all_blanes_simple():
                 "sort_order": "desc",
                 "sort_by": "created_at",
                 "page": current_page,
-                "per_page": 10,
+                "pagination_size": 100,
             }
 
             response = httpx.get(url, headers=headers, params=params)
@@ -198,7 +198,7 @@ def list_blanes(start: int = 1, offset: int = 10) -> str:
     items_needed = offset
 
     # We might need multiple API pages if offset spans across pages
-    url = f"{BASEURLBACK}/blanes"
+    url = f"{BASEURLFRONT}/blanes"
     headers = get_auth_headers()
 
     all_fetched_blanes = []
@@ -214,7 +214,7 @@ def list_blanes(start: int = 1, offset: int = 10) -> str:
                 "status": "active",
                 "sort_by": "created_at",
                 "sort_order": "desc",
-                "per_page": 10,
+                "pagination_size": 10,
                 "page": current_api_page,
             }
 
@@ -282,10 +282,11 @@ def list_blanes(start: int = 1, offset: int = 10) -> str:
         name = blane.get("name", "Unknown")
         price = blane.get("price_current")
         id = blane.get("id")
+        slug = blane.get("slug")
         if price:
-            output.append(f"{i}. {name} — {price} Dhs (blane_id: {id})")
+            output.append(f"{i}. {name} — {price} Dhs (id: {id}, slug: {slug})")
         else:
-            output.append(f"{i}. {name} (blane_id: {id})")
+            output.append(f"{i}. {name} (id: {id}, slug: {slug})")
         # output.append(f"{i}. {blane['name']} — MAD. {blane['price_current']} (ID: {blane['id']}) - BlaneType: {blane['type']} - TimeType: {blane['type_time']}")
 
     # Add navigation hints
@@ -340,12 +341,12 @@ def handle_user_pagination_response(
 
 
 @tool("get_blane_info")
-def get_blane_info(blane_id: int):
+def get_blane_info(blane_slug: str):
     """
-    Gives details of any blane using its ID.
+    Gives details of any blane using its slug.
     Returns a detailed, user-friendly WhatsApp message about a specific blane.
     """
-    url = f"{BASEURLBACK}/blanes/{blane_id}"
+    url = f"{BASEURLFRONT}/blanes/{blane_slug}?include=blaneImages,category"
     headers = get_auth_headers()
 
     try:
@@ -483,11 +484,11 @@ def find_blanes_by_name_or_link(
                 "status": "active",
                 "sort_by": "created_at",
                 "sort_order": "desc",
-                "per_page": 500,
+                "pagination_size": 100,
                 "page": page,
             }
             resp = httpx.get(
-                f"{BASEURLBACK}/getBlanesByCategory", headers=headers, params=params
+                f"{BASEURLFRONT}/blanes", headers=headers, params=params
             )
             resp.raise_for_status()
             payload = resp.json()
@@ -536,17 +537,20 @@ def find_blanes_by_name_or_link(
         name = blane.get("name", "Unknown")
         price = blane.get("price_current")
         blane_id = blane.get("id")
+        blane_slug = blane.get("slug")
         if price:
-            lines.append(f"{idx} - {name} — {price} Dhs (blane_id: {blane_id})")
+            lines.append(
+                f"{idx} - {name} — {price} Dhs (id: {blane_id}, slug: {blane_slug})"
+            )
         else:
-            lines.append(f"{idx} - {name} (blane_id: {blane_id})")
+            lines.append(f"{idx} - {name} (id: {blane_id}, slug: {blane_slug})")
 
     return "\n".join(lines)
 
 
 @tool("list_blanes_by_district_and_category")
 def list_blanes_by_district_and_category(
-    category_id: int,
+    category: str,
     city: str = None,
     district: str = None,
 ) -> str:
@@ -554,7 +558,7 @@ def list_blanes_by_district_and_category(
     List blanes by district (or sub-district) and category with simple text-based filtering.
 
     Args:
-        category_id: Category ID to filter by (required).
+        category: Category slug to filter by (required).
         city: Optional city name to apply as a substring filter on blane city.
         district: District or sub-district to search within. If empty, location filtering is skipped.
 
@@ -574,12 +578,13 @@ def list_blanes_by_district_and_category(
             params = {
                 "page": page,
                 "sort_order": "asc",
-                "paginationSize": 100,
-                "category_id": category_id,
+                "pagination_size": 100,
+                "category": category,
+                "status": "active",
             }
 
             resp = httpx.get(
-                f"{BASEURLBACK}/getBlanesByCategory",
+                f"{BASEURLFRONT}/blanes",
                 headers=get_auth_headers(),
                 params=params,
             )
@@ -642,7 +647,7 @@ def list_blanes_by_district_and_category(
             pieces.append(f"city: {city}")
         if district:
             pieces.append(f"district: {district}")
-        pieces.append(f"category_id: {category_id}")
+        pieces.append(f"category: {category}")
         return f"❌ No blanes found for {', '.join(pieces)}. Try different search criteria."
 
     matched.sort(key=lambda x: x.get("_location_score", 0), reverse=True)
@@ -654,7 +659,7 @@ def list_blanes_by_district_and_category(
         filters.append(f"City: {city}")
     if district_label or district:
         filters.append(f"District: {district_label or district}")
-    filters.append(f"Category ID: {category_id}")
+    filters.append(f"Category: {category}")
     lines.append(f"📋 Filtered Results: {' | '.join(filters)}")
     lines.append(f"📊 Showing {len(matched)} matches")
     lines.append("")
@@ -663,10 +668,11 @@ def list_blanes_by_district_and_category(
         name = blane.get("name", "Unknown")
         price = blane.get("price_current")
         bid = blane.get("id")
+        slug = blane.get("slug")
         if price:
-            lines.append(f"{idx}. {name} — {price} Dhs (blane_id: {bid})")
+            lines.append(f"{idx}. {name} — {price} Dhs (id: {bid}, slug: {slug})")
         else:
-            lines.append(f"{idx}. {name} (blane_id: {bid})")
+            lines.append(f"{idx}. {name} (id: {bid}, slug: {slug})")
 
     lines.append("")
     lines.append("That's all for these filters.")

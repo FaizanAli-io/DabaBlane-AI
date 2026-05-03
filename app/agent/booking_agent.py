@@ -1,8 +1,8 @@
 import os
 from datetime import date
+from sqlalchemy import desc
 from dotenv import load_dotenv
 
-from sqlalchemy import desc
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain.agents import create_tool_calling_agent, AgentExecutor
@@ -21,7 +21,6 @@ from tools.blanes import (
 )
 
 from tools.booking import (
-    list_reservations,
     create_reservation,
     preview_reservation,
     get_available_periods,
@@ -59,7 +58,6 @@ class BookingToolAgent:
             get_blane_info,
             find_blanes_by_name_or_link,
             list_blanes_by_district_and_category,
-            list_reservations,
             create_reservation,
             preview_reservation,
             prepare_reservation_prompt,

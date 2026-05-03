@@ -1,11 +1,11 @@
 import httpx
 from langchain.tools import tool
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from datetime import datetime, date, time, timedelta
 
 from .inputs import ReservationInput
 
-from .config import BASEURLBACK, BASEURLFRONT, AGENT_URL
+from .config import BASEURLFRONT, AGENT_URL
 
 from .utils import (
     parse_datetime,
@@ -26,10 +26,10 @@ def safe_json_get(resp: httpx.Response) -> Dict[str, Any]:
         return {"error": resp.text}
 
 
-def fetch_blane(blane_id: int) -> Dict[str, Any]:
+def fetch_blane(blane_slug: str) -> Dict[str, Any]:
     headers = get_auth_headers()
 
-    url = f"{BASEURLBACK}/blanes/{blane_id}"
+    url = f"{BASEURLFRONT}/blanes/{blane_slug}?include=blaneImages,category"
     resp = httpx.get(url, headers=headers)
 
     resp.raise_for_status()
@@ -37,19 +37,8 @@ def fetch_blane(blane_id: int) -> Dict[str, Any]:
 
     blane = data.get("data")
     if not blane:
-        raise ValueError(f"Blane with ID {blane_id} not found")
+        raise ValueError(f"Blane with slug {blane_slug} not found")
     return blane
-
-
-def fetch_data(endpoint: str, headers: Dict[str, str]) -> Dict[str, Any]:
-    try:
-        with httpx.Client(headers=headers, timeout=10.0) as client:
-            response = client.get(BASEURLBACK + endpoint)
-            if response.status_code == 200:
-                return {"data": response.json().get("data", [])}
-            return {"error": response.text, "status": response.status_code}
-    except Exception as e:
-        return {"error": str(e)}
 
 
 def parse_date(value: str) -> date:
@@ -129,8 +118,14 @@ def calculate_pricing(blane: Dict[str, Any], city: str, quantity: int):
     except Exception:
         base_price = 0.0
 
+
     qty = max(1, int(quantity or 1))
-    total = base_price * qty
+    total_base = base_price * qty
+    
+    tva_percent = float(blane.get('tva', 0) or 0)
+    tva_amount = total_base * (tva_percent / 100.0)
+    total = total_base + tva_amount
+
 
     delivery_cost = 0.0
     if blane.get("type") == "order" and not blane.get("is_digital"):
@@ -171,19 +166,19 @@ def calculate_pricing(blane: Dict[str, Any], city: str, quantity: int):
 
 
 @tool("get_available_time_slots")
-def get_available_time_slots(blane_id: int, date: str) -> str:
+def get_available_time_slots(blane_slug: str, date: str) -> str:
     """
     Retrieve available time slots for a given reservation-type blane on a specific date.
 
     Parameters:
-        blane_id (int): The ID of the blane to check availability for.
+        blane_slug (str): The slug of the blane to check availability for.
         date (str): The date (YYYY-MM-DD) to fetch available slots.
 
     Returns:
         str: A formatted string listing available time slots with remaining capacity, or an error message if none are available or an issue occurs.
     """
     try:
-        blane = fetch_blane(blane_id)
+        blane = fetch_blane(blane_slug)
     except ValueError as e:
         return f"❌ {str(e)}"
     except httpx.HTTPStatusError as e:
@@ -194,7 +189,7 @@ def get_available_time_slots(blane_id: int, date: str) -> str:
     if blane.get("type") != "reservation" or blane.get("type_time") != "time":
         return "❌ Unsupported reservation type returned by the API."
 
-    slug = blane.get("slug")
+    slug = blane.get("slug", blane_slug)
     if not slug:
         return "❌ Could not find slug for this blane."
 
@@ -230,19 +225,19 @@ def get_available_time_slots(blane_id: int, date: str) -> str:
 
 
 @tool("get_available_periods")
-def get_available_periods(blane_id: int) -> str:
+def get_available_periods(blane_slug: str) -> str:
     """
     Retrieve available reservation periods (date-based) for a given blane.
 
     Parameters:
-        blane_id (int): The ID of the blane to check available periods for.
+        blane_slug (str): The slug of the blane to check available periods for.
 
     Returns:
         str: A formatted string listing available periods with remaining capacity,
              or an error message if none are available or an issue occurs.
     """
     try:
-        blane = fetch_blane(blane_id)
+        blane = fetch_blane(blane_slug)
     except ValueError as e:
         return f"❌ {str(e)}"
     except httpx.HTTPStatusError as e:
@@ -260,7 +255,7 @@ def get_available_periods(blane_id: int) -> str:
     try:
         headers = get_auth_headers()
         front_url = f"{BASEURLFRONT}/blanes/{slug}"
-        resp = httpx.get(front_url, headers=headers)
+        resp = httpx.get(front_url, headers=headers, params={"include": "category"})
         resp.raise_for_status()
         data = safe_json_get(resp)
         detailed = data.get("data", {})
@@ -284,19 +279,19 @@ def get_available_periods(blane_id: int) -> str:
 
 
 @tool("prepare_reservation_prompt")
-def prepare_reservation_prompt(blane_id: int) -> str:
+def prepare_reservation_prompt(blane_slug: str, blane_id: Optional[int] = None) -> str:
     """
     Prepare a booking information prompt for a specific blane before creating a reservation.
     Always invoke this before asking the user for booking details.
 
     Parameters:
-        blane_id (int): The ID of the blane to prepare a reservation prompt for.
+        blane_id (int): Optional blane ID, used only for display.
 
     Returns:
         str: A formatted reservation prompt with details about the blane, or an error message if the blane could not be fetched.
     """
     try:
-        blane = fetch_blane(blane_id)
+        blane = fetch_blane(blane_slug)
     except Exception as e:
         return f"❌ Error fetching blane: {e}"
 
@@ -314,8 +309,9 @@ def prepare_reservation_prompt(blane_id: int) -> str:
     payment_routes = "\n\t- ".join(payment_routes)
     date_range = get_date_range(blane)
 
+    display_ref = f"ID: {blane_id}" if blane_id else f"slug: {blane_slug}"
     lines = [
-        f"To proceed with your reservation for the blane *{name} - (ID: {blane_id})*, I need the following details:\n",
+        f"To proceed with your reservation for the blane *{name} - ({display_ref})*, I need the following details:\n",
         "*Name*:",
         "*Email*:",
         "*Phone Number:* (with country code)",
@@ -385,7 +381,7 @@ def preview_reservation(input: ReservationInput) -> str:
     delivery_address = data.get("delivery_address")
 
     try:
-        blane = fetch_blane(blane_id)
+        blane = fetch_blane(input.blane_slug)
     except Exception as e:
         return f"❌ Error fetching blane: {e}"
 
@@ -442,14 +438,10 @@ def preview_reservation(input: ReservationInput) -> str:
             else [f"Start Date: {res_date}", f"End Date: {end_date}"]
         )
     else:
-        lines += [
-            *(f"City: {city}" if city and city != "N/A" else []),
-            *(
-                f"Delivery Address: {delivery_address}"
-                if delivery_address and delivery_address != "N/A"
-                else []
-            ),
-        ]
+        if city and city != "N/A":
+            lines.append(f"City: {city}")
+        if delivery_address and delivery_address != "N/A":
+            lines.append(f"Delivery Address: {delivery_address}")
 
     if blane_type == "order" and not blane.get("is_digital"):
         lines.append(f"Delivery Cost: {delivery_cost} MAD")
@@ -488,7 +480,7 @@ def create_reservation(input: ReservationInput) -> str:
     delivery_address = data.get("delivery_address")
 
     try:
-        blane = fetch_blane(blane_id)
+        blane = fetch_blane(input.blane_slug)
     except Exception as e:
         return f"❌ Error fetching blane: {e}"
 
@@ -548,38 +540,41 @@ def create_reservation(input: ReservationInput) -> str:
 
     base_payload = {
         "name": name,
-        "city": city,
         "email": email,
         "phone": phone,
-        "status": "pending",
         "blane_id": blane_id,
-        "comments": comments,
         "quantity": quantity,
-        "number_persons": quantity,
-        "partiel_price": partial_price,
         "payment_method": payment_method,
-        "total_price": pricing["total"] - partial_price,
+        "total_price": pricing["total"],
     }
+
+    if comments and comments != "None":
+        base_payload["comments"] = comments
+
+    if blane_type == "reservation":
+        base_payload["number_persons"] = quantity
+
+    if payment_method == "partiel":
+        base_payload["partiel_price"] = partial_price
+
+    if blane_type == "order" and not is_digital:
+        base_payload["city"] = city
+        base_payload["delivery_address"] = delivery_address
 
     payload = {
         **base_payload,
         "date": res_date if blane_type == "reservation" else None,
         "time": res_time if type_time == "time" else None,
         "end_date": end_date if type_time == "date" else None,
-        "delivery_address": (
-            "Online Service"
-            if (blane_type == "order" and is_digital)
-            else delivery_address
-        ),
     }
+    payload = {k: v for k, v in payload.items() if v is not None}
 
     # --- Submit reservation/order ---
     try:
-        headers = get_auth_headers()
         api_endpoint = BASEURLFRONT + (
             "/reservations" if blane_type == "reservation" else "/orders"
         )
-        res = httpx.post(api_endpoint, headers=headers, json=payload)
+        res = httpx.post(api_endpoint, json=payload)
         res.raise_for_status()
         data = safe_json_get(res)
     except httpx.HTTPStatusError as e:
@@ -597,41 +592,9 @@ def create_reservation(input: ReservationInput) -> str:
         )
 
         if reference:
-            pay_link = f"{AGENT_URL}/payment-page/{reference}"
+            pay_link = data.get("payment_url") or f"{AGENT_URL}/payment-page/{reference}"
             return f"✅ Created. Ref: {reference}. 💳 Pay here: {pay_link}"
         else:
             return f"✅ Success! {data}, but payment reference missing."
 
     return f"✅ Success! {data}, Please check your WhatsApp number for booking status."
-
-
-@tool("list_reservations")
-def list_reservations(email: str) -> Dict[str, Any]:
-    """
-    List all reservations and orders associated with a given client email.
-
-    Args:
-        email (str): Client's email.
-
-    Returns:
-        dict: {
-            "orders": [...],
-            "reservations": [...],
-            "errors": { "reservations": "...", "orders": "..." }
-        }
-    """
-    headers = get_auth_headers()
-    orders_result = fetch_data(f"/orders?email={email}", headers)
-    reservations_result = fetch_data(f"/reservations?email={email}", headers)
-
-    errors = {}
-    if "error" in orders_result:
-        errors["orders"] = orders_result["error"]
-    if "error" in reservations_result:
-        errors["reservations"] = reservations_result["error"]
-
-    return {
-        "reservations": reservations_result.get("data", []),
-        "orders": orders_result.get("data", []),
-        "errors": errors,
-    }
